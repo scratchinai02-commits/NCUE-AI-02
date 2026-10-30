@@ -307,19 +307,22 @@ export const SkillModal: React.FC<SkillModalProps> = ({
               <h3 className="text-xs font-bold text-blue-900 tracking-wider mb-1.5">技能說明</h3>
               <p className="text-slate-700 text-sm leading-relaxed">{skill.desc}</p>
               {skill.links && skill.links.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-x-3 gap-y-1.5">
-                  {skill.links.map((link) => (
-                    <a
-                      key={link.url}
-                      href={link.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-blue-700 hover:text-blue-900 hover:underline flex items-center gap-1 font-medium"
-                    >
-                      {link.title}
-                      <ExternalLink className="w-3 h-3" aria-hidden="true" />
-                    </a>
-                  ))}
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <p className="text-xs font-bold text-blue-900 tracking-wider mb-2">相關資源</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {skill.links.map((link) => (
+                      <a
+                        key={link.url}
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md bg-blue-50 text-blue-800 border border-blue-100 hover:bg-blue-100 font-medium transition-colors"
+                      >
+                        {link.title}
+                        <ExternalLink className="w-3 h-3 opacity-70" aria-hidden="true" />
+                      </a>
+                    ))}
+                  </div>
                 </div>
               )}
               {skill.video && (

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Skill } from '../types';
-import { Star, ArrowUpRight, Sparkles } from 'lucide-react';
+import { Star, ArrowUpRight, Sparkles, ExternalLink } from 'lucide-react';
 
 interface SkillCardProps {
   skill: Skill;
@@ -51,6 +51,24 @@ export const SkillCard: React.FC<SkillCardProps> = ({ skill, isFavorite, onToggl
       </h3>
 
       <p className="text-sm text-slate-600 leading-relaxed line-clamp-3 mb-4">{skill.desc}</p>
+
+      {skill.links && skill.links.length > 0 && (
+        <ul aria-label="相關資源" className="relative z-10 flex flex-wrap gap-1.5 -mt-1 mb-4">
+          {skill.links.map((l) => (
+            <li key={l.url}>
+              <a
+                href={l.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-blue-50 text-blue-800 border border-blue-100 hover:bg-blue-100 hover:border-blue-200 transition-colors"
+              >
+                {l.title}
+                <ExternalLink className="w-3 h-3 opacity-70" aria-hidden="true" />
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {/* Footer */}
       <div className="mt-auto pt-3 border-t border-slate-100 flex items-center justify-between gap-2">

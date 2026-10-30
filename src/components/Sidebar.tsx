@@ -1,6 +1,7 @@
 import React from 'react';
 import { CategoryId } from '../types';
 import { categories } from '../data/skills';
+import { TEACHING_PORTALS } from '../data/resources';
 import {
   Award,
   BookOpen,
@@ -37,12 +38,7 @@ const ICONS: Record<CategoryId, React.ReactNode> = {
   all: <LayoutGrid className="w-4 h-4 text-slate-600" />,
 };
 
-const PORTALS = [
-  { title: '108 課綱官方條目查詢', url: 'https://www.naer.edu.tw/PageSyllabus?fid=52', icon: BookOpen },
-  { title: '教育部因材網（適性教學）', url: 'https://adl.edu.tw/', icon: Laptop },
-  { title: '臺北酷課雲（教學影音）', url: 'https://cooc.tp.edu.tw/', icon: Tv },
-  { title: '中小學數位教學指引', url: 'https://pads.moe.edu.tw/download.php', icon: ShieldCheck },
-];
+const PORTAL_ICONS = [BookOpen, Laptop, Tv, ShieldCheck];
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentCategory, onSelectCategory, counts, dimmed }) => {
   return (
@@ -104,7 +100,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentCategory, onSelectCateg
           必備教學資料庫
         </p>
         <ul className="space-y-1 text-xs text-slate-600">
-          {PORTALS.map(({ title, url, icon: Icon }) => (
+          {TEACHING_PORTALS.map(({ title, url }, i) => {
+            const Icon = PORTAL_ICONS[i] ?? BookOpen;
+            return (
             <li key={url}>
               <a
                 href={url}
@@ -119,7 +117,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentCategory, onSelectCateg
                 <ExternalLink className="w-3 h-3 text-slate-300 group-hover:text-blue-600" aria-hidden="true" />
               </a>
             </li>
-          ))}
+            );
+          })}
         </ul>
       </div>
 
