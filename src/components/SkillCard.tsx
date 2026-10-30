@@ -1,6 +1,6 @@
 import React from 'react';
 import { Skill } from '../types';
-import { Star, ArrowUpRight, Award } from 'lucide-react';
+import { Star, ArrowUpRight, Sparkles } from 'lucide-react';
 
 interface SkillCardProps {
   skill: Skill;
@@ -8,89 +8,73 @@ interface SkillCardProps {
   onToggleFavorite: (id: string) => void;
   onOpen: (skill: Skill) => void;
   categoryName: string;
+  hasOutput?: boolean;
 }
 
-export const SkillCard: React.FC<SkillCardProps> = ({
-  skill,
-  isFavorite,
-  onToggleFavorite,
-  onOpen,
-  categoryName,
-}) => {
+export const SkillCard: React.FC<SkillCardProps> = ({ skill, isFavorite, onToggleFavorite, onOpen, categoryName, hasOutput }) => {
   return (
-    <div
-      onClick={() => onOpen(skill)}
-      className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs hover:shadow-lg hover:border-blue-200 transition-all duration-200 cursor-pointer group flex flex-col justify-between h-full relative"
-    >
-      <div>
-        {/* Top bar with clean unboxed metadata and actions */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
-            <span className="font-mono font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded text-[11px]">
-              Skill {skill.id}
-            </span>
-            <span aria-hidden="true">·</span>
-            <span>{categoryName}</span>
-            {skill.top && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span className="text-amber-600 font-semibold flex items-center gap-1">
-                  <Award className="w-3.5 h-3.5 inline text-amber-500" />
-                  研習核心
-                </span>
-              </>
-            )}
-          </div>
-
-          <div className="flex items-center gap-1">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleFavorite(skill.id);
-              }}
-              title={isFavorite ? '取消收藏' : '加入收藏'}
-              className={`p-1.5 rounded-lg transition-colors ${
-                isFavorite
-                  ? 'text-amber-500 hover:text-amber-600 bg-amber-50'
-                  : 'text-slate-300 hover:text-amber-500 hover:bg-slate-100'
-              }`}
-            >
-              <Star
-                className={`w-4 h-4 ${
-                  isFavorite ? 'fill-amber-400 text-amber-500' : ''
-                }`}
-              />
-            </button>
-            <div className="w-7 h-7 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-blue-900 group-hover:text-white transition-all">
-              <ArrowUpRight className="w-4 h-4" />
-            </div>
-          </div>
+    <article className="relative bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs hover:shadow-lg hover:border-blue-200 focus-within:border-blue-300 transition-all duration-200 group flex flex-col h-full">
+      {/* Meta row */}
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="flex items-center gap-2 min-w-0 text-xs text-slate-500">
+          <span className="shrink-0 font-mono font-bold text-blue-900 bg-blue-50 px-2 py-0.5 rounded text-[11px]">
+            {skill.id}
+          </span>
+          {skill.top && (
+            <span className="shrink-0 text-[11px] font-semibold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">必學</span>
+          )}
+          <span className="truncate">{categoryName}</span>
         </div>
 
-        {/* Title */}
-        <h3 className="text-base sm:text-lg font-bold text-slate-900 mb-2 group-hover:text-blue-900 transition-colors">
-          {skill.title}
-        </h3>
-
-        {/* Description */}
-        <p className="text-xs sm:text-sm text-slate-600 leading-relaxed line-clamp-3 mb-4">
-          {skill.desc}
-        </p>
+        <button
+          type="button"
+          onClick={() => onToggleFavorite(skill.id)}
+          aria-label={isFavorite ? `取消收藏「${skill.title}」` : `收藏「${skill.title}」`}
+          aria-pressed={isFavorite}
+          className={`relative z-10 shrink-0 p-1.5 -m-1 rounded-lg transition-colors ${
+            isFavorite ? 'text-amber-500 hover:text-amber-600 bg-amber-50' : 'text-slate-300 hover:text-amber-500 hover:bg-slate-100'
+          }`}
+        >
+          <Star className={`w-4 h-4 ${isFavorite ? 'fill-amber-400 text-amber-500' : ''}`} aria-hidden="true" />
+        </button>
       </div>
 
-      {/* Footer tags / cues */}
-      {skill.tags && skill.tags.length > 0 && (
-        <div className="pt-3 border-t border-slate-100 flex items-center gap-2 text-[11px] text-slate-400 overflow-hidden">
-          {skill.tags.slice(0, 3).map((tag, i) => (
-            <React.Fragment key={tag}>
-              {i > 0 && <span aria-hidden="true">/</span>}
-              <span className="whitespace-nowrap hover:text-slate-600 transition-colors">
+      {/* Title — 整張卡片的點擊區（stretched button，鍵盤可操作） */}
+      <h3 className="text-base sm:text-lg font-bold text-slate-900 mb-2 group-hover:text-blue-900 transition-colors">
+        <button
+          type="button"
+          onClick={() => onOpen(skill)}
+          className="text-left after:absolute after:inset-0 after:rounded-2xl after:content-[''] focus:outline-none focus-visible:after:ring-2 focus-visible:after:ring-blue-800"
+        >
+          {skill.title}
+        </button>
+      </h3>
+
+      <p className="text-sm text-slate-600 leading-relaxed line-clamp-3 mb-4">{skill.desc}</p>
+
+      {/* Footer */}
+      <div className="mt-auto pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0 overflow-hidden text-[11px] text-slate-500">
+          {hasOutput ? (
+            <span className="flex items-center gap-1 text-emerald-700 font-medium whitespace-nowrap">
+              <Sparkles className="w-3 h-3" aria-hidden="true" />
+              已有生成成果
+            </span>
+          ) : (
+            skill.tags?.slice(0, 3).map((tag) => (
+              <span key={tag} className="whitespace-nowrap px-1.5 py-0.5 rounded bg-slate-100">
                 {tag}
               </span>
-            </React.Fragment>
-          ))}
+            ))
+          )}
         </div>
-      )}
-    </div>
+        <span
+          className="shrink-0 w-7 h-7 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-blue-900 group-hover:text-white transition-all"
+          aria-hidden="true"
+        >
+          <ArrowUpRight className="w-4 h-4" />
+        </span>
+      </div>
+    </article>
   );
 };

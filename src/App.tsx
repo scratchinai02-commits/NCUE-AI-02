@@ -1,13 +1,15 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Role, CategoryId, Skill, TeachingContext } from './types';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { Role, CategoryId, Skill, TeachingContext, AiStatus } from './types';
 import { skillsData, categories } from './data/skills';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { SkillCard } from './components/SkillCard';
-import { SkillModal } from './components/SkillModal';
+import { SkillModal, SkillDraft } from './components/SkillModal';
 import { QuickGuideModal } from './components/QuickGuideModal';
-import { BANNER_IMAGE_BASE64 } from './components/HeroBanner';
-import { Search, X, Award, Sparkles, BookOpen, Layers, ChevronDown, ChevronUp, GraduationCap } from 'lucide-react';
+import { BANNER_IMAGE_URL } from './components/HeroBanner';
+import { fetchAiStatus } from './lib/api';
+import { loadJSON, saveJSON } from './lib/utils';
+import { Search, X, Award, ArrowRight, Star } from 'lucide-react';
 
 const initialContext: TeachingContext = {
   stage: '',
@@ -20,304 +22,315 @@ const initialContext: TeachingContext = {
   extra: '',
 };
 
+const STORAGE = {
+  favorites: 'ncue_ai_favorites',
+  context: 'ncue_ai_context',
+  role: 'ncue_ai_role',
+};
+
+const skillCategories = categories.filter((c) => c.id !== 'all' && c.id !== 'favorites' && c.id !== 'top5');
+const categoryName = (id: string) => categories.find((c) => c.id === id)?.name || '教學模組';
+
+/** 搜尋計分：標題 > 標籤 / 編號 > 說明 > Prompt 內文；多個關鍵字需全部命中 */
+function searchScore(skill: Skill, terms: string[]): number {
+  let total = 0;
+  for (const term of terms) {
+    let s = 0;
+    if (/^\d{1,2}$/.test(term)) s = skill.id === term.padStart(2, '0') ? 5 : 0; // 純數字＝技能編號
+    else if (skill.title.toLowerCase().includes(term)) s = 4;
+    else if (skill.tags?.some((t) => t.toLowerCase().includes(term))) s = 3;
+    else if (skill.desc.toLowerCase().includes(term)) s = 2;
+    else if (skill.prompt.toLowerCase().includes(term)) s = 1;
+    if (!s) return 0;
+    total += s;
+  }
+  return total;
+}
+
 export default function App() {
-  const [currentRole, setCurrentRole] = useState<Role>('student');
+  const [currentRole, setCurrentRole] = useState<Role>(() => (loadJSON<Role>(STORAGE.role, 'student') === 'professor' ? 'professor' : 'student'));
   const [currentCategory, setCurrentCategory] = useState<CategoryId>('top5');
   const [searchQuery, setSearchQuery] = useState('');
-  const [expandAll, setExpandAll] = useState(false);
-  const [favorites, setFavorites] = useState<string[]>(() => {
-    try {
-      const saved = localStorage.getItem('ncue_ai_favorites');
-      return saved ? JSON.parse(saved) : ['02', '10', '12', '19', '23'];
-    } catch {
-      return ['02', '10', '12', '19', '23'];
-    }
-  });
-
+  const [favorites, setFavorites] = useState<string[]>(() => loadJSON<string[]>(STORAGE.favorites, []));
+  const [teachingContext, setTeachingContext] = useState<TeachingContext>(() => ({
+    ...initialContext,
+    ...loadJSON<Partial<TeachingContext>>(STORAGE.context, {}),
+  }));
   const [activeSkill, setActiveSkill] = useState<Skill | null>(null);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
-  const [teachingContext, setTeachingContext] = useState<TeachingContext>(initialContext);
+  const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, SkillDraft>>({});
+  const [bannerFailed, setBannerFailed] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
-  // Sync favorites to localStorage
+  useEffect(() => saveJSON(STORAGE.favorites, favorites), [favorites]);
+  useEffect(() => saveJSON(STORAGE.role, currentRole), [currentRole]);
   useEffect(() => {
-    try {
-      localStorage.setItem('ncue_ai_favorites', JSON.stringify(favorites));
-    } catch (e) {
-      console.warn('Failed to save favorites to localStorage', e);
-    }
-  }, [favorites]);
+    const t = window.setTimeout(() => saveJSON(STORAGE.context, teachingContext), 300);
+    return () => window.clearTimeout(t);
+  }, [teachingContext]);
+
+  useEffect(() => {
+    fetchAiStatus().then(setAiStatus);
+  }, []);
+
+  // 按「/」快速聚焦搜尋框
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (e.key === '/' && !activeSkill && !isGuideOpen && tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeSkill, isGuideOpen]);
 
   const toggleFavorite = (id: string) => {
-    setFavorites((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-    );
+    setFavorites((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
   };
 
-  const updateTeachingContext = (updates: Partial<TeachingContext>) => {
+  const updateTeachingContext = useCallback((updates: Partial<TeachingContext>) => {
     setTeachingContext((prev) => ({ ...prev, ...updates }));
+  }, []);
+  const resetTeachingContext = useCallback(() => setTeachingContext(initialContext), []);
+  const closeSkill = useCallback(() => setActiveSkill(null), []);
+  const saveDraft = useCallback((id: string, patch: SkillDraft) => {
+    setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  }, []);
+
+  const openSkillById = (id: string) => {
+    const s = skillsData.find((x) => x.id === id);
+    if (s) {
+      setIsGuideOpen(false);
+      setActiveSkill(s);
+    }
   };
 
-  const resetTeachingContext = () => {
-    setTeachingContext(initialContext);
+  const selectCategory = (id: CategoryId) => {
+    setSearchQuery('');
+    setCurrentCategory(id);
   };
 
-  // Filter skills by category and search
-  const filteredSkills = useMemo(() => {
-    return skillsData.filter((skill) => {
-      // 1. Category filter (if expandAll is true, ignore category filter and show all matching search)
-      if (!expandAll) {
-        if (currentCategory === 'top5' && !skill.top) return false;
-        if (currentCategory === 'favorites' && !favorites.includes(skill.id)) return false;
-        if (currentCategory !== 'top5' && currentCategory !== 'favorites' && currentCategory !== 'all') {
-          if (skill.cat !== currentCategory) return false;
-        }
-      }
+  const counts = useMemo(() => {
+    const c = { all: skillsData.length, top5: 0, favorites: favorites.length } as Record<CategoryId, number>;
+    for (const cat of skillCategories) c[cat.id] = 0;
+    for (const s of skillsData) {
+      c[s.cat]++;
+      if (s.top) c.top5++;
+    }
+    return c;
+  }, [favorites]);
 
-      // 2. Search query filter
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchesTitle = skill.title.toLowerCase().includes(q);
-        const matchesDesc = skill.desc.toLowerCase().includes(q);
-        const matchesTags = skill.tags?.some((t) => t.toLowerCase().includes(q));
-        const matchesPrompt = skill.prompt.toLowerCase().includes(q);
-        const matchesId = skill.id.includes(q);
-        return matchesTitle || matchesDesc || matchesTags || matchesPrompt || matchesId;
-      }
+  const terms = searchQuery.toLowerCase().trim().split(/\s+/).filter(Boolean);
+  const isSearching = terms.length > 0;
 
-      return true;
-    });
-  }, [currentCategory, searchQuery, favorites, expandAll]);
+  const visibleSkills = useMemo(() => {
+    if (isSearching) {
+      return skillsData
+        .map((s) => ({ s, score: searchScore(s, terms) }))
+        .filter((x) => x.score > 0)
+        .sort((a, b) => b.score - a.score || a.s.id.localeCompare(b.s.id))
+        .map((x) => x.s);
+    }
+    switch (currentCategory) {
+      case 'top5':
+        return skillsData.filter((s) => s.top);
+      case 'favorites':
+        return skillsData.filter((s) => favorites.includes(s.id));
+      case 'all':
+        return skillsData;
+      default:
+        return skillsData.filter((s) => s.cat === currentCategory);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCategory, searchQuery, favorites]);
 
-  // Current category metadata
-  const activeCategoryMeta = useMemo(() => {
-    return categories.find((c) => c.id === currentCategory) || categories[0];
-  }, [currentCategory]);
+  const activeCategoryMeta = categories.find((c) => c.id === currentCategory) || categories[0];
+
+  const renderCard = (skill: Skill) => (
+    <SkillCard
+      key={skill.id}
+      skill={skill}
+      isFavorite={favorites.includes(skill.id)}
+      onToggleFavorite={toggleFavorite}
+      onOpen={setActiveSkill}
+      categoryName={categoryName(skill.cat)}
+      hasOutput={Boolean(drafts[skill.id]?.output)}
+    />
+  );
+
+  const grid = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5';
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
-      
-      {/* Top Header */}
-      <Header
-        currentRole={currentRole}
-        onRoleChange={setCurrentRole}
-        onOpenGuide={() => setIsGuideOpen(true)}
-      />
+    <div className="min-h-screen bg-slate-50 flex flex-col text-slate-800">
+      <a
+        href="#main"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-white focus:text-blue-900 focus:px-3 focus:py-2 focus:rounded-lg focus:shadow"
+      >
+        跳到技能列表
+      </a>
 
-      {/* Hero Banner Image Section */}
-      <div className="w-full bg-slate-900 border-b border-slate-200 shadow-md relative">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="w-full overflow-hidden rounded-2xl shadow-xl border border-blue-500/25 relative group">
+      <Header currentRole={currentRole} onRoleChange={setCurrentRole} onOpenGuide={() => setIsGuideOpen(true)} />
+
+      {!bannerFailed && (
+        <div className="w-full bg-slate-900">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
             <img
-              src={BANNER_IMAGE_BASE64}
-              alt="NCUE 未來教師 AI 力 橫幅"
-              className="w-full h-auto object-cover transform transition-transform duration-500 group-hover:scale-[1.01]"
+              src={BANNER_IMAGE_URL}
+              alt="NCUE 未來教師 AI 力：Skills 設計與教學創新"
+              onError={() => setBannerFailed(true)}
+              decoding="async"
+              className="w-full h-auto rounded-2xl shadow-xl border border-blue-500/25"
             />
-            {/* Overlay Action Button on Banner */}
-            <div className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6">
-              <button
-                onClick={() => {
-                  setExpandAll(!expandAll);
-                  if (!expandAll) setCurrentCategory('all');
-                }}
-                className={`px-4 sm:px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all shadow-lg flex items-center gap-2 border ${
-                  expandAll
-                    ? 'bg-amber-400 text-slate-900 border-amber-300'
-                    : 'bg-blue-900 hover:bg-blue-800 text-white border-blue-400/40 backdrop-blur-md'
-                }`}
-              >
-                <Layers className="w-4 h-4 text-amber-300" />
-                <span>{expandAll ? '已全部展開顯示' : '橫幅全部展開分類'}</span>
-                {expandAll ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              </button>
-            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Main Workspace Frame */}
-      <div className="flex-1 max-w-7xl mx-auto w-full flex flex-col md:flex-row overflow-hidden">
-        
-        {/* Left Sidebar */}
-        <Sidebar
-          currentCategory={currentCategory}
-          onSelectCategory={(id) => {
-            setExpandAll(false);
-            setCurrentCategory(id);
-          }}
-          favoritesCount={favorites.length}
-          totalSkillsCount={skillsData.length}
-        />
+      <div className="flex-1 max-w-7xl mx-auto w-full flex flex-col md:flex-row">
+        <Sidebar currentCategory={currentCategory} onSelectCategory={selectCategory} counts={counts} dimmed={isSearching} />
 
-        {/* Right Main Content Area */}
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 flex flex-col">
-          
-          {/* Header Bar with Search & Category Info */}
-          <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 pb-5 border-b border-slate-200">
-            <div>
+        <main id="main" className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 flex flex-col">
+          <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4 pb-5 border-b border-slate-200">
+            <div className="min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
-                  {expandAll ? '全部技能總覽（已展開全部類別）' : activeCategoryMeta.name}
+                  {isSearching ? `搜尋「${searchQuery.trim()}」` : activeCategoryMeta.name}
                 </h2>
-                <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900">
-                  {filteredSkills.length} 個技能
+                <span className="shrink-0 text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900">
+                  {visibleSkills.length} 個技能
                 </span>
               </div>
-              <p className="text-xs sm:text-sm text-slate-500">
-                {expandAll ? '展示所有分類底下的 30 個精選 AI 實戰教學技能' : activeCategoryMeta.description}
+              <p className="text-sm text-slate-500">
+                {isSearching ? '搜尋範圍：全部分類（技能名稱、標籤、說明與 Prompt 內文）' : activeCategoryMeta.description}
               </p>
             </div>
 
-            {/* Search Input Bar */}
-            <div className="relative w-full md:w-72 shrink-0">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <div className="relative w-full md:w-80 shrink-0">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
               <input
-                type="text"
+                ref={searchRef}
+                type="search"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜尋技能名稱、課綱、標籤..."
-                className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-8 py-2 text-xs sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-900 focus:border-transparent transition-all shadow-xs"
+                onKeyDown={(e) => e.key === 'Escape' && setSearchQuery('')}
+                placeholder="搜尋技能、課綱、標籤…（按 / ）"
+                aria-label="搜尋技能"
+                className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-9 py-2.5 text-base sm:text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-900 focus:border-transparent transition-all shadow-xs [&::-webkit-search-cancel-button]:hidden"
               />
               {searchQuery && (
                 <button
+                  type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                  aria-label="清除搜尋"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-4 h-4" aria-hidden="true" />
                 </button>
               )}
             </div>
           </div>
 
-          {/* Quick Notice Banner for Top 5 */}
-          {currentCategory === 'top5' && !expandAll && (
+          {currentCategory === 'top5' && !isSearching && (
             <div className="mb-6 p-4 rounded-xl bg-gradient-to-r from-blue-900 via-indigo-900 to-blue-950 text-white shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
-                  <Award className="w-4 h-4 text-amber-300" />
+                <div className="w-9 h-9 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
+                  <Award className="w-4 h-4 text-amber-300" aria-hidden="true" />
                 </div>
                 <div>
-                  <h4 className="text-sm font-bold text-white">
-                    師資培育研習必修 Top 5 核心技能
-                  </h4>
-                  <p className="text-xs text-blue-200/90">
-                    教案生成、數位互動、差異化分層、15分鐘試教演練與 ORID 反思日誌
-                  </p>
+                  <h3 className="text-sm font-bold text-white">師資培育研習必修 Top 5 核心技能</h3>
+                  <p className="text-xs text-blue-200/90">教案生成、數位互動、差異化分層、15 分鐘試教演練與 ORID 反思日誌</p>
                 </div>
               </div>
               <button
-                onClick={() => {
-                  setExpandAll(true);
-                  setCurrentCategory('all');
-                }}
-                className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors whitespace-nowrap text-white border border-white/20"
+                type="button"
+                onClick={() => selectCategory('all')}
+                className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 transition-colors whitespace-nowrap text-white border border-white/20 flex items-center gap-1"
               >
-                橫幅全部展開 →
+                瀏覽全部 {skillsData.length} 個技能 <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
               </button>
             </div>
           )}
 
-          {/* Skills Grid (Grouped by Category if expandAll is true, else flat) */}
-          {expandAll && !searchQuery ? (
+          {visibleSkills.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mb-3">
+                {currentCategory === 'favorites' && !isSearching ? <Star className="w-6 h-6" /> : <Search className="w-6 h-6" />}
+              </div>
+              {currentCategory === 'favorites' && !isSearching ? (
+                <>
+                  <h3 className="text-base font-bold text-slate-800 mb-1">還沒有收藏的技能</h3>
+                  <p className="text-sm text-slate-500 max-w-sm mb-4">點技能卡右上角的星號，就會出現在這裡。</p>
+                  <button
+                    type="button"
+                    onClick={() => selectCategory('all')}
+                    className="px-4 py-2 bg-blue-900 text-white rounded-xl text-sm font-semibold hover:bg-blue-800 transition-colors"
+                  >
+                    瀏覽全部技能
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-base font-bold text-slate-800 mb-1">找不到相符的技能</h3>
+                  <p className="text-sm text-slate-500 max-w-sm mb-4">換個關鍵字試試，例如「教案」、「評量」、「Rubric」或技能編號「12」。</p>
+                  <button
+                    type="button"
+                    onClick={() => selectCategory('top5')}
+                    className="px-4 py-2 bg-blue-900 text-white rounded-xl text-sm font-semibold hover:bg-blue-800 transition-colors"
+                  >
+                    清除搜尋
+                  </button>
+                </>
+              )}
+            </div>
+          ) : currentCategory === 'all' && !isSearching ? (
             <div className="space-y-10">
-              {categories.filter(c => c.id !== 'all' && c.id !== 'favorites' && c.id !== 'top5').map((cat) => {
-                const catSkills = filteredSkills.filter(s => s.cat === cat.id);
-                if (catSkills.length === 0) return null;
+              {skillCategories.map((cat) => {
+                const catSkills = visibleSkills.filter((s) => s.cat === cat.id);
+                if (!catSkills.length) return null;
                 return (
-                  <div key={cat.id} className="space-y-4">
+                  <section key={cat.id} aria-labelledby={`sec-${cat.id}`} className="space-y-4">
                     <div className="flex items-center gap-3 pb-2 border-b border-slate-200">
-                      <h3 className="text-lg font-bold text-blue-900 flex items-center gap-2">
-                        <span>📌</span> {cat.name}
+                      <h3 id={`sec-${cat.id}`} className="text-lg font-bold text-blue-900">
+                        {cat.name}
                       </h3>
                       <span className="text-xs font-mono text-slate-500 bg-slate-200/70 px-2 py-0.5 rounded-full">
-                        {catSkills.length} 個模組
+                        {catSkills.length} 個技能
                       </span>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
-                      {catSkills.map((skill) => (
-                        <SkillCard
-                          key={skill.id}
-                          skill={skill}
-                          isFavorite={favorites.includes(skill.id)}
-                          onToggleFavorite={toggleFavorite}
-                          onOpen={setActiveSkill}
-                          categoryName={cat.name}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : filteredSkills.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5 flex-1">
-              {filteredSkills.map((skill) => {
-                const catMeta = categories.find((c) => c.id === skill.cat);
-                return (
-                  <SkillCard
-                    key={skill.id}
-                    skill={skill}
-                    isFavorite={favorites.includes(skill.id)}
-                    onToggleFavorite={toggleFavorite}
-                    onOpen={setActiveSkill}
-                    categoryName={catMeta?.name || '教學模組'}
-                  />
+                    <div className={grid}>{catSkills.map(renderCard)}</div>
+                  </section>
                 );
               })}
             </div>
           ) : (
-            /* Empty State */
-            <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
-              <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mb-3">
-                <Search className="w-6 h-6" />
-              </div>
-              <h3 className="text-base font-bold text-slate-800 mb-1">
-                找不到相符的技能模組
-              </h3>
-              <p className="text-xs sm:text-sm text-slate-500 max-w-sm mb-4">
-                試試清除搜尋關鍵字「{searchQuery}」，或切換至其他研習分類。
-              </p>
-              <button
-                onClick={() => {
-                  setSearchQuery('');
-                  setExpandAll(false);
-                  setCurrentCategory('top5');
-                }}
-                className="px-4 py-2 bg-blue-900 text-white rounded-xl text-xs font-semibold hover:bg-blue-800 transition-colors"
-              >
-                重置分類與搜尋
-              </button>
-            </div>
+            <div className={grid}>{visibleSkills.map(renderCard)}</div>
           )}
 
-          {/* Footer note */}
-          <footer className="mt-12 pt-6 border-t border-slate-200 text-xs text-slate-400 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <span>
-              國立彰化師範大學 師資培育與教學中心 · NCUE Future Teacher AI Skills
-            </span>
-            <span>
-              108 課綱素養導向 · 生成式 AI 教學輔助應用
-            </span>
+          <footer className="mt-12 pt-6 border-t border-slate-200 text-xs text-slate-400 flex flex-col sm:flex-row items-center justify-between gap-3 text-center">
+            <span>國立彰化師範大學 師資培育與教學中心 · NCUE Future Teacher AI Skills</span>
+            <span>108 課綱素養導向 · 生成式 AI 教學輔助應用</span>
           </footer>
-
         </main>
       </div>
 
-      {/* Interactive Modal */}
-      <SkillModal
-        skill={activeSkill}
-        currentRole={currentRole}
-        onClose={() => setActiveSkill(null)}
-        context={teachingContext}
-        onUpdateContext={updateTeachingContext}
-        onResetContext={resetTeachingContext}
-      />
+      {activeSkill && (
+        <SkillModal
+          key={activeSkill.id}
+          skill={activeSkill}
+          currentRole={currentRole}
+          onClose={closeSkill}
+          context={teachingContext}
+          onUpdateContext={updateTeachingContext}
+          onResetContext={resetTeachingContext}
+          aiStatus={aiStatus}
+          draft={drafts[activeSkill.id] || {}}
+          onSaveDraft={saveDraft}
+        />
+      )}
 
-      {/* Guide Modal */}
-      <QuickGuideModal
-        isOpen={isGuideOpen}
-        onClose={() => setIsGuideOpen(false)}
-      />
-
+      <QuickGuideModal isOpen={isGuideOpen} onClose={() => setIsGuideOpen(false)} onOpenSkill={openSkillById} />
     </div>
   );
 }
