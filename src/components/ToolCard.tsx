@@ -1,6 +1,24 @@
 import React from 'react';
 import type { ToolDef, ToolId } from '../data/tools';
-import { FlaskConical, FileText, Languages, ScanText, Quote, ArrowUpRight, Upload } from 'lucide-react';
+import {
+  FlaskConical,
+  FileText,
+  Languages,
+  ScanText,
+  Quote,
+  Lightbulb,
+  PenLine,
+  ChartColumn,
+  Bot,
+  Workflow,
+  NotebookPen,
+  Palette,
+  Gamepad2,
+  ClipboardCheck,
+  Drama,
+  ArrowUpRight,
+  Upload,
+} from 'lucide-react';
 
 const ICONS: Record<ToolId, React.FC<{ className?: string }>> = {
   sandbox: FlaskConical,
@@ -8,11 +26,28 @@ const ICONS: Record<ToolId, React.FC<{ className?: string }>> = {
   translate: Languages,
   ocr: ScanText,
   apa: Quote,
+  research: Lightbulb,
+  writing: PenLine,
+  data: ChartColumn,
+  tutor: Bot,
+  workflow: Workflow,
+  lesson: NotebookPen,
+  visual: Palette,
+  game: Gamepad2,
+  assess: ClipboardCheck,
+  classroom: Drama,
 };
+
+const GROUP_STYLE = {
+  common: { badge: 'bg-slate-100 text-slate-600', label: '共同常用' },
+  professor: { badge: 'bg-amber-100 text-amber-900', label: '教授' },
+  student: { badge: 'bg-blue-100 text-blue-900', label: '師培生' },
+} as const;
 
 /** 將 accept 副檔名轉成簡短說明，例如「PDF・圖片」 */
 function fileTypes(accept: string) {
-  const labels = accept.split(',').map((e) => (e === '.pdf' ? 'PDF' : e === '.txt' ? '文字檔' : '圖片'));
+  const names: Record<string, string> = { '.pdf': 'PDF', '.txt': '文字檔', '.csv': 'CSV' };
+  const labels = accept.split(',').map((e) => names[e] ?? '圖片');
   return [...new Set(labels)].join('・');
 }
 
@@ -34,7 +69,9 @@ export const ToolCard: React.FC<ToolCardProps> = ({ tool, onOpen, hasConversatio
         <span className="w-11 h-11 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center group-hover:bg-teal-700 group-hover:text-white transition-colors">
           <ToolIcon id={tool.id} className="w-5 h-5" />
         </span>
-        <span className="text-[11px] text-slate-500 bg-slate-100 px-2 py-0.5 rounded">{tool.audience}</span>
+        <span className={`text-[11px] font-medium px-2 py-0.5 rounded text-right ${GROUP_STYLE[tool.group].badge}`}>
+          {tool.theme ?? GROUP_STYLE[tool.group].label}
+        </span>
       </div>
 
       <h3 className="text-base sm:text-lg font-bold text-slate-900 mb-1 group-hover:text-teal-800 transition-colors">
@@ -58,7 +95,7 @@ export const ToolCard: React.FC<ToolCardProps> = ({ tool, onOpen, hasConversatio
             {tool.file.required ? '需上傳' : '可上傳'} {fileTypes(tool.file.accept)}
           </span>
         ) : (
-          <span>文字輸入</span>
+          <span>輸入文字即可</span>
         )}
         <span
           className="shrink-0 w-7 h-7 rounded-lg bg-slate-50 flex items-center justify-center text-slate-400 group-hover:bg-teal-700 group-hover:text-white transition-all"

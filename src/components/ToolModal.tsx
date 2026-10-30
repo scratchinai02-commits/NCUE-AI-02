@@ -38,7 +38,17 @@ const EXT_MIME: Record<string, string> = {
   heic: 'image/heic',
   heif: 'image/heif',
   txt: 'text/plain',
+  csv: 'text/csv',
 };
+
+/** 文字類檔案（CSV、TXT）直接以文字放進對話，不以附件送出 */
+const MAX_TEXT_FILE_CHARS = 50000;
+function decodeText(b64: string) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
 
 function readFileBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -121,6 +131,10 @@ export const ToolModal: React.FC<ToolModalProps> = ({ tool, aiStatus, draft, onS
     }
     try {
       const data = await readFileBase64(f);
+      if (mimeType.startsWith('text/') && decodeText(data).length > MAX_TEXT_FILE_CHARS) {
+        setFileError(`文字檔超過 ${MAX_TEXT_FILE_CHARS / 10000} 萬字，請只保留需要分析的部分。`);
+        return;
+      }
       setFile({ name: f.name, mimeType, size: f.size, data });
       setFormError(null);
     } catch {
@@ -143,11 +157,16 @@ export const ToolModal: React.FC<ToolModalProps> = ({ tool, aiStatus, draft, onS
       requestAnimationFrame(() => rightColRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     }
     let partial = '';
+    const textFile = file && file.mimeType.startsWith('text/') ? file : null;
+    const payload = msgs.map(({ role, text: t }, i) => ({
+      role,
+      text: i === 0 && textFile ? `【附加檔案：${textFile.name}】\n"""\n${decodeText(textFile.data)}\n"""\n\n${t}` : t,
+    }));
     try {
       const full = await streamTool({
         tool: tool.id,
-        messages: msgs.map(({ role, text: t }) => ({ role, text: t })),
-        file,
+        messages: payload,
+        file: textFile ? null : file,
         signal: ctrl.signal,
         onText: (t) => {
           partial = t;

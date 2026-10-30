@@ -8,7 +8,7 @@ import { SkillModal, SkillDraft } from './components/SkillModal';
 import { QuickGuideModal } from './components/QuickGuideModal';
 import { ToolCard } from './components/ToolCard';
 import { ToolModal, ToolDraft } from './components/ToolModal';
-import { TOOLS, ToolDef } from './data/tools';
+import { TOOLS, TOOL_GROUPS, toolsInGroup, ToolDef, ToolGroup } from './data/tools';
 import { BANNER_IMAGE_URL } from './components/HeroBanner';
 import { fetchAiStatus } from './lib/api';
 import { loadJSON, saveJSON } from './lib/utils';
@@ -159,7 +159,7 @@ export default function App() {
   }, [currentCategory, searchQuery, favorites]);
 
   const matchedTools = useMemo(
-    () => (isSearching ? TOOLS.filter((t) => terms.every((term) => `${t.title}${t.tagline}${t.desc}`.toLowerCase().includes(term))) : []),
+    () => (isSearching ? TOOLS.filter((t) => terms.every((term) => `${t.title}${t.tagline}${t.desc}${t.theme ?? ''}`.toLowerCase().includes(term))) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [searchQuery],
   );
@@ -292,12 +292,29 @@ export default function App() {
           )}
 
           {showTools ? (
-            <div className="space-y-5">
-              <div className={grid}>
-                {TOOLS.map((t) => (
-                  <ToolCard key={t.id} tool={t} onOpen={setActiveTool} hasConversation={Boolean(toolDrafts[t.id]?.messages?.length)} />
-                ))}
-              </div>
+            <div className="space-y-10">
+              {(currentRole === 'professor' ? ['professor', 'common', 'student'] : ['student', 'common', 'professor']).map((gid) => {
+                const g = TOOL_GROUPS.find((x) => x.id === gid)!;
+                const mine = (gid === 'professor' && currentRole === 'professor') || (gid === 'student' && currentRole === 'student');
+                return (
+                  <section key={g.id} aria-labelledby={`tools-${g.id}`} className="space-y-4">
+                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pb-2 border-b border-slate-200">
+                      <h3 id={`tools-${g.id}`} className={`text-lg font-bold ${gid === 'professor' ? 'text-amber-900' : gid === 'student' ? 'text-blue-900' : 'text-teal-800'}`}>
+                        {g.title}
+                      </h3>
+                      <span className="text-sm text-slate-500">{g.subtitle}</span>
+                      {mine && (
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">你目前的身分</span>
+                      )}
+                    </div>
+                    <div className={grid}>
+                      {toolsInGroup(g.id as ToolGroup).map((t) => (
+                        <ToolCard key={t.id} tool={t} onOpen={setActiveTool} hasConversation={Boolean(toolDrafts[t.id]?.messages?.length)} />
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
               <p className="text-xs text-slate-500 leading-relaxed">
                 {aiStatus === null
                   ? '正在確認 AI 服務…'

@@ -12,7 +12,7 @@ dotenv.config();
 // ---------------------------------------------------------------------------
 const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
 const MAX_PROMPT_CHARS = Number(process.env.MAX_PROMPT_CHARS) || 12000;
-const MAX_CHAT_CHARS = 40000; // 工具對話（含追問）總字數上限
+const MAX_CHAT_CHARS = 80000; // 工具對話（含追問、內嵌的文字檔）總字數上限
 const MAX_CHAT_TURNS = 30;
 const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX) || 40; // 每個 IP 在時間窗內可生成次數
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 10 * 60 * 1000;
