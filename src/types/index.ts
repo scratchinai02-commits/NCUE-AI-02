@@ -1,11 +1,12 @@
 export type Role = 'student' | 'professor';
 
-export type CategoryId = 'top5' | 'cat1' | 'cat2' | 'cat3' | 'cat4' | 'cat5' | 'favorites' | 'all';
+export type SkillCategoryId = 'cat1' | 'cat2' | 'cat3' | 'cat4' | 'cat5';
+
+export type CategoryId = 'tools' | 'agents' | 'top5' | SkillCategoryId | 'favorites' | 'all';
 
 export interface Category {
   id: CategoryId;
   name: string;
-  iconName: string;
   badge?: string;
   description: string;
 }
@@ -17,11 +18,13 @@ export interface SkillLink {
 
 export interface Skill {
   id: string;
-  cat: 'cat1' | 'cat2' | 'cat3' | 'cat4' | 'cat5';
+  cat: SkillCategoryId;
   top?: boolean;
   title: string;
   desc: string;
   prompt: string;
+  /** 若此技能需要使用者貼上自己的資料（學生作答、數據、文獻…），在此說明要貼什麼 */
+  materialHint?: string;
   video?: string;
   links?: SkillLink[];
   tags?: string[];
@@ -47,4 +50,10 @@ export interface ScenarioPreset {
   pedagogies: string[];
   assessments: string[];
   extra: string;
+}
+
+export interface AiStatus {
+  /** 後端存在且已設定 API 金鑰 */
+  available: boolean;
+  model: string;
 }

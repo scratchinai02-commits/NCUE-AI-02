@@ -1,38 +1,65 @@
-import React, { useState, useEffect } from 'react';
-import { Skill, Role, TeachingContext } from '../types';
-import { promptHeaders } from '../data/skills';
-import { 
-  scenarioPresets, 
-  pedagogyOptions, 
-  assessmentOptions, 
-  stageOptions, 
-  commonSubjects 
-} from '../data/presets';
-import { 
-  X, 
-  Copy, 
-  Check, 
-  RotateCcw, 
-  Sparkles, 
-  ExternalLink, 
-  Sliders, 
-  Play, 
-  Terminal, 
-  BookmarkCheck, 
-  Loader2, 
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Skill, Role, TeachingContext, AiStatus } from '../types';
+import { scenarioPresets, pedagogyOptions, assessmentOptions, stageOptions, commonSubjects } from '../data/presets';
+import { buildPrompt, contextCompleteness } from '../lib/prompt';
+import { streamGenerate } from '../lib/api';
+import { copyRich, copyText, downloadFile, safeFilename } from '../lib/utils';
+import { markdownToDocx } from '../lib/docx';
+import { useDialog } from '../lib/useDialog';
+import { Markdown } from './Markdown';
+import {
+  X,
+  Copy,
+  Check,
+  RotateCcw,
+  Sparkles,
+  ExternalLink,
+  Sliders,
+  Terminal,
+  BookmarkCheck,
+  Loader2,
   FileDown,
+  FileText,
   Info,
-  ChevronRight
+  Square,
+  Paperclip,
+  Lock,
+  TriangleAlert,
+  Pencil,
 } from 'lucide-react';
 
+export interface SkillDraft {
+  output?: string;
+  material?: string;
+  customPrompt?: string | null;
+}
+
 interface SkillModalProps {
-  skill: Skill | null;
+  skill: Skill;
   currentRole: Role;
   onClose: () => void;
   context: TeachingContext;
   onUpdateContext: (context: Partial<TeachingContext>) => void;
   onResetContext: () => void;
+  aiStatus: AiStatus | null;
+  draft: SkillDraft;
+  onSaveDraft: (id: string, patch: SkillDraft) => void;
 }
+
+const inputCls =
+  'w-full border border-slate-300 rounded-lg px-3 py-2 text-base sm:text-sm bg-white focus:ring-2 focus:ring-blue-800 focus:border-transparent outline-none';
+const chipCls = (on: boolean) =>
+  `text-xs sm:text-[13px] px-2.5 py-1 rounded-lg border transition-all ${
+    on
+      ? 'bg-blue-900 text-white border-blue-900 shadow-xs font-medium'
+      : 'bg-white text-slate-600 border-slate-300 hover:border-blue-900 hover:text-blue-900'
+  }`;
+
+const EXTERNAL_AI = [
+  { name: 'ChatGPT', url: 'https://chatgpt.com/' },
+  { name: 'Claude', url: 'https://claude.ai/new' },
+  { name: 'Gemini', url: 'https://gemini.google.com/app' },
+];
 
 export const SkillModal: React.FC<SkillModalProps> = ({
   skill,
@@ -41,317 +68,361 @@ export const SkillModal: React.FC<SkillModalProps> = ({
   context,
   onUpdateContext,
   onResetContext,
+  aiStatus,
+  draft,
+  onSaveDraft,
 }) => {
-  const [copied, setCopied] = useState(false);
-  const [copiedOutput, setCopiedOutput] = useState(false);
-  const [activeTab, setActiveTab] = useState<'prompt' | 'output'>('prompt');
-  
-  // AI generation states
+  const dialogRef = useDialog<HTMLDivElement>(true, onClose);
+  const rightColRef = useRef<HTMLDivElement>(null);
+  const outputRef = useRef<HTMLDivElement>(null);
+
+  const [material, setMaterial] = useState(draft.material ?? '');
+  const [customPrompt, setCustomPrompt] = useState<string | null>(draft.customPrompt ?? null);
+  const [output, setOutput] = useState(draft.output ?? '');
+  const [activeTab, setActiveTab] = useState<'prompt' | 'output'>(draft.output ? 'output' : 'prompt');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [aiOutput, setAiOutput] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [copied, setCopied] = useState<'prompt' | 'output' | null>(null);
+  const [showMaterial, setShowMaterial] = useState(Boolean(skill.materialHint || draft.material));
 
-  // Close on Escape
+  const abortRef = useRef<AbortController | null>(null);
+  const latest = useRef({ output, material, customPrompt });
+  latest.current = { output, material, customPrompt };
+
+  // 關閉時：停止生成並保存草稿（成果、素材、手動修改的 Prompt）
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+    return () => {
+      abortRef.current?.abort();
+      onSaveDraft(skill.id, { ...latest.current });
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skill.id]);
 
-  if (!skill) return null;
+  const autoPrompt = useMemo(
+    () => buildPrompt(currentRole, context, skill, material),
+    [currentRole, context, skill, material],
+  );
+  const finalPrompt = customPrompt ?? autoPrompt;
+  const completeness = contextCompleteness(context);
 
-  // Toggle pedagogy
-  const handleTogglePedagogy = (p: string) => {
-    const current = [...context.pedagogies];
-    const exists = current.includes(p);
-    const updated = exists ? current.filter((item) => item !== p) : [...current, p];
-    onUpdateContext({ pedagogies: updated });
-  };
+  const activePresetId = scenarioPresets.find(
+    (p) => p.stage === context.stage && p.subject === context.subject && p.topic === context.topic,
+  )?.id;
 
-  // Toggle assessment
-  const handleToggleAssessment = (a: string) => {
-    const current = [...context.assessments];
-    const exists = current.includes(a);
-    const updated = exists ? current.filter((item) => item !== a) : [...current, a];
-    onUpdateContext({ assessments: updated });
-  };
+  const toggleIn = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
-  // Apply a preset
-  const handleApplyPreset = (presetId: string) => {
-    const preset = scenarioPresets.find((p) => p.id === presetId);
-    if (!preset) return;
+  const applyPreset = (presetId: string) => {
+    const p = scenarioPresets.find((x) => x.id === presetId);
+    if (!p) return;
     onUpdateContext({
-      stage: preset.stage,
-      subject: preset.subject,
-      topic: preset.topic,
-      pedagogies: preset.pedagogies,
-      assessments: preset.assessments,
-      extra: preset.extra,
+      stage: p.stage,
+      subject: p.subject,
+      topic: p.topic,
+      pedagogies: p.pedagogies,
+      assessments: p.assessments,
+      extra: p.extra,
       pedagogyCustom: '',
       assessmentCustom: '',
     });
   };
 
-  // Build the complete prompt
-  const stage = context.stage.trim() || '[未指定階段]';
-  const subject = context.subject.trim() || '[未指定科目]';
-  const topic = context.topic.trim() || '[未指定單元]';
+  const flashCopied = (what: 'prompt' | 'output') => {
+    setCopied(what);
+    window.setTimeout(() => setCopied((c) => (c === what ? null : c)), 2500);
+  };
 
-  const finalPedagogy = [
-    ...context.pedagogies,
-    context.pedagogyCustom.trim(),
-  ].filter(Boolean).join('、') || '[未指定教學法]';
-
-  const finalAssessment = [
-    ...context.assessments,
-    context.assessmentCustom.trim(),
-  ].filter(Boolean).join('、') || '[未指定評量型態]';
-
-  const extra = context.extra.trim() || '無特殊補充';
-
-  const baseHeader = promptHeaders[currentRole];
-  const finalPrompt = baseHeader
-    .replace(/\[教育階段\]/g, stage)
-    .replace(/\[科目\]/g, subject)
-    .replace(/\[單元主題\]/g, topic)
-    .replace(/\[教學法\]/g, finalPedagogy)
-    .replace(/\[評量型態\]/g, finalAssessment)
-    .replace(/\[補充說明\]/g, extra) + skill.prompt;
-
-  // Copy to clipboard
   const handleCopyPrompt = async () => {
-    try {
-      await navigator.clipboard.writeText(finalPrompt);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    } catch {
-      // Fallback
-      const textarea = document.createElement('textarea');
-      textarea.value = finalPrompt;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    }
+    if (await copyText(finalPrompt)) flashCopied('prompt');
   };
 
   const handleCopyOutput = async () => {
-    if (!aiOutput) return;
-    try {
-      await navigator.clipboard.writeText(aiOutput);
-      setCopiedOutput(true);
-      setTimeout(() => setCopiedOutput(false), 2500);
-    } catch {
-      setCopiedOutput(true);
-      setTimeout(() => setCopiedOutput(false), 2500);
-    }
+    if (!output) return;
+    const html = outputRef.current?.innerHTML ?? '';
+    if (await copyRich(html, output)) flashCopied('output');
   };
 
-  // Live generate with Gemini
+  const baseName = `NCUE_AI_${skill.id}_${safeFilename(skill.title)}`;
+
+  const handleDownloadWord = () => {
+    if (!output) return;
+    const subtitle = `${currentRole === 'student' ? '師培生視角' : '教授／指導視角'} · ${new Date().toLocaleDateString('zh-TW')} · NCUE 未來教師 AI 力`;
+    downloadFile(`${baseName}.docx`, markdownToDocx(output, skill.title, subtitle));
+  };
+
+  const handleDownloadMd = (what: 'prompt' | 'output') => {
+    const text = what === 'output' ? output : finalPrompt;
+    downloadFile(`${baseName}${what === 'prompt' ? '_Prompt' : ''}.md`, new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+  };
+
   const handleGenerate = async () => {
+    if (isGenerating) {
+      abortRef.current?.abort();
+      return;
+    }
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     setIsGenerating(true);
     setErrorMessage(null);
+    setOutput('');
     setActiveTab('output');
-
+    if (window.matchMedia('(max-width: 1023px)').matches) {
+      requestAnimationFrame(() => rightColRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }
     try {
-      const res = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: finalPrompt,
-          systemInstruction: currentRole === 'student'
-            ? '你是一位台灣資深師資培育輔導教授與教學卓越獲獎教師。請以 108 課綱精神與標準教育術語，針對師培生的教案、評量與試教需求，輸出結構清晰、條理分明、具體可落地的繁體中文範例。'
-            : '你是一位高等教育師資培育審查委員與教學設計專家。請站在大學師培教授的高度，提供具備理論深度 (如 TPACK, UbD, Bloom, ORID)、評量規準嚴謹度與教學示範價值的繁體中文成果。',
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || '生成失敗');
+      await streamGenerate({ prompt: finalPrompt, role: currentRole, signal: ctrl.signal, onText: setOutput });
+    } catch (err) {
+      if (!ctrl.signal.aborted) {
+        setErrorMessage((err as Error).message || '生成失敗，請確認網路或複製至外部 AI 工具使用。');
       }
-
-      setAiOutput(data.text);
-    } catch (err: any) {
-      setErrorMessage(err.message || '生成失敗，請確認網路或複製至外部 AI 工具使用。');
     } finally {
+      if (abortRef.current === ctrl) abortRef.current = null;
       setIsGenerating(false);
     }
   };
 
-  // Download Output as text / markdown
-  const handleDownloadOutput = () => {
-    const textToDownload = activeTab === 'output' && aiOutput ? aiOutput : finalPrompt;
-    const blob = new Blob([textToDownload], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `NCUE_AI_${skill.id}_${skill.title.replace(/\s+/g, '_')}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const canGenerate = Boolean(aiStatus?.available);
+  const modelLabel = aiStatus?.model
+    ? aiStatus.model.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+    : 'Gemini';
+
+  // ---------------------------------------------------------------------------
+  // UI 片段
+  // ---------------------------------------------------------------------------
+  const renderGenerateButton = (compact = false) =>
+    canGenerate ? (
+      <button
+        type="button"
+        onClick={handleGenerate}
+        className={`${
+          isGenerating ? 'bg-rose-600 hover:bg-rose-700' : 'bg-indigo-600 hover:bg-indigo-700'
+        } text-white text-sm font-semibold px-3.5 py-2 rounded-xl shadow-xs transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${
+          compact ? 'flex-1' : ''
+        }`}
+      >
+        {isGenerating ? (
+          <>
+            <Square className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
+            停止生成
+          </>
+        ) : (
+          <>
+            <Sparkles className="w-4 h-4 text-amber-300" aria-hidden="true" />
+            {output ? '重新生成' : '即時 AI 生成'}
+          </>
+        )}
+      </button>
+    ) : null;
+
+  const renderCopyPromptButton = (compact = false) => (
+    <button
+      type="button"
+      onClick={handleCopyPrompt}
+      className={`text-sm font-semibold px-3.5 py-2 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-xs whitespace-nowrap ${
+        copied === 'prompt' ? 'bg-emerald-600 text-white' : 'bg-blue-900 hover:bg-blue-800 text-white'
+      } ${compact ? 'flex-1' : ''}`}
+    >
+      {copied === 'prompt' ? <Check className="w-4 h-4" aria-hidden="true" /> : <Copy className="w-4 h-4" aria-hidden="true" />}
+      {copied === 'prompt' ? '已複製！' : '複製 Prompt'}
+    </button>
+  );
+
+  const MaterialSection = (
+    <section
+      className={`bg-white p-4 sm:p-5 rounded-xl border shadow-xs ${skill.materialHint ? 'border-blue-300 ring-1 ring-blue-100' : 'border-slate-200'}`}
+    >
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <label htmlFor="material" className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+          <Paperclip className="w-4 h-4 text-blue-600" aria-hidden="true" />
+          附加素材
+          <span className="font-normal text-slate-400 text-xs">（選填）</span>
+        </label>
+        {skill.materialHint && (
+          <span className="text-[11px] font-semibold text-blue-800 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+            此技能建議提供
+          </span>
+        )}
+      </div>
+      <textarea
+        id="material"
+        value={material}
+        onChange={(e) => setMaterial(e.target.value)}
+        placeholder={skill.materialHint || '可貼上學生作答、課堂紀錄、數據或文獻摘要，AI 會以此為依據。'}
+        className={`${inputCls} resize-y min-h-24 leading-relaxed`}
+      />
+      <p className="mt-1.5 text-[11px] text-slate-500 flex items-center gap-1">
+        <Lock className="w-3 h-3" aria-hidden="true" />
+        請以代號取代學生姓名、學號等個資。
+      </p>
+    </section>
+  );
 
   return (
-    <div 
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-2 sm:p-4 md:p-6"
+    <div
+      className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-slate-950/70 backdrop-blur-xs sm:p-4 md:p-6"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-white w-full max-w-6xl rounded-2xl shadow-2xl flex flex-col h-[96vh] sm:h-[92vh] relative overflow-hidden border border-slate-200">
-        
-        {/* Modal Top Bar */}
-        <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-white shrink-0">
-          <div className="flex items-center gap-3">
-            <span className="text-xs sm:text-sm font-bold text-white bg-blue-900 px-3 py-1 rounded-lg">
-              Skill {skill.id}
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="skill-modal-title"
+        tabIndex={-1}
+        className="bg-white w-full max-w-6xl sm:rounded-2xl shadow-2xl flex flex-col h-dvh sm:h-[92dvh] relative overflow-hidden sm:border border-slate-200 outline-none"
+      >
+        {/* Top bar */}
+        <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-200 flex justify-between items-center gap-3 bg-white shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <span className="shrink-0 text-xs sm:text-sm font-bold text-white bg-blue-900 px-2.5 py-1 rounded-lg font-mono">
+              {skill.id}
             </span>
-            <h3 className="text-lg sm:text-xl font-bold text-slate-900 truncate">
+            <h2 id="skill-modal-title" className="text-base sm:text-xl font-bold text-slate-900 truncate">
               {skill.title}
-            </h3>
-            <span className={`text-xs font-semibold px-2.5 py-1 rounded-md border ${
-              currentRole === 'student'
-                ? 'bg-blue-50 text-blue-800 border-blue-200'
-                : 'bg-amber-50 text-amber-900 border-amber-200'
-            }`}>
+            </h2>
+            <span
+              className={`hidden sm:inline-block shrink-0 text-xs font-semibold px-2.5 py-1 rounded-md border ${
+                currentRole === 'student' ? 'bg-blue-50 text-blue-800 border-blue-200' : 'bg-amber-50 text-amber-900 border-amber-200'
+              }`}
+            >
               {currentRole === 'student' ? '👩‍🏫 師培生視角' : '👨‍💼 教授 / 指導視角'}
             </span>
           </div>
-
           <button
+            type="button"
+            data-autofocus
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors rounded-xl w-9 h-9 flex items-center justify-center"
+            aria-label="關閉"
+            className="shrink-0 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors rounded-xl w-9 h-9 flex items-center justify-center"
           >
-            <X className="w-5 h-5" />
+            <X className="w-5 h-5" aria-hidden="true" />
           </button>
         </div>
 
-        {/* Modal Body: Two Column Layout */}
-        <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
-          
-          {/* Left Column: Context Configuration */}
-          <div className="w-full lg:w-5/12 border-r border-slate-200 p-5 sm:p-6 overflow-y-auto bg-slate-50/50 flex flex-col gap-5">
-            
-            {/* Skill Description */}
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
-              <span className="text-xs font-bold text-blue-900 uppercase tracking-wider block mb-1.5">
-                技能說明
-              </span>
-              <p className="text-slate-700 text-xs sm:text-sm leading-relaxed">
-                {skill.desc}
-              </p>
-
+        {/* Body：手機整體捲動；桌機左右各自捲動 */}
+        <div className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden lg:flex lg:flex-row">
+          {/* Left: 情境設定 */}
+          <div className="w-full lg:w-5/12 lg:border-r border-slate-200 p-4 sm:p-6 lg:overflow-y-auto bg-slate-50/60 flex flex-col gap-4 sm:gap-5">
+            <section className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+              <h3 className="text-xs font-bold text-blue-900 tracking-wider mb-1.5">技能說明</h3>
+              <p className="text-slate-700 text-sm leading-relaxed">{skill.desc}</p>
               {skill.links && skill.links.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-2">
-                  {skill.links.map((link) => (
-                    <a
-                      key={link.url}
-                      href={link.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-blue-700 hover:text-blue-900 hover:underline flex items-center gap-1 font-medium"
-                    >
-                      <span>{link.title}</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
-                  ))}
+                <div className="mt-3 pt-3 border-t border-slate-100">
+                  <p className="text-xs font-bold text-blue-900 tracking-wider mb-2">相關資源</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {skill.links.map((link) => (
+                      <a
+                        key={link.url}
+                        href={link.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md bg-blue-50 text-blue-800 border border-blue-100 hover:bg-blue-100 font-medium transition-colors"
+                      >
+                        {link.title}
+                        <ExternalLink className="w-3 h-3 opacity-70" aria-hidden="true" />
+                      </a>
+                    ))}
+                  </div>
                 </div>
               )}
-            </div>
-
-            {/* Video demonstration if available */}
-            {skill.video && (
-              <div className="rounded-xl overflow-hidden border border-slate-200 shadow-xs bg-slate-900">
-                <div className="bg-slate-800 px-3 py-1.5 text-xs text-slate-200 font-medium flex items-center gap-2">
-                  <Play className="w-3.5 h-3.5 text-red-500 fill-red-500" />
-                  研習操作示範影片
-                </div>
-                <div className="relative w-full pb-[56.25%]">
+              {skill.video && (
+                <div className="mt-3 rounded-lg overflow-hidden bg-slate-900 relative w-full pb-[56.25%]">
                   <iframe
-                    className="absolute top-0 left-0 w-full h-full"
+                    className="absolute inset-0 w-full h-full"
                     src={skill.video}
-                    title="研習示範影片"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    title={`${skill.title} 示範影片`}
+                    loading="lazy"
+                    allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                     allowFullScreen
                   />
                 </div>
-              </div>
-            )}
+              )}
+            </section>
 
-            {/* Quick Scenario Preset Chips */}
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <BookmarkCheck className="w-3.5 h-3.5 text-blue-600" />
-                  快速帶入研習範例情境
-                </span>
-                <span className="text-[11px] text-slate-400">點擊即自動套入</span>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {scenarioPresets.map((preset) => (
-                  <button
-                    key={preset.id}
-                    onClick={() => handleApplyPreset(preset.id)}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-blue-100 hover:text-blue-900 text-slate-700 transition-colors border border-slate-200 font-medium text-left"
-                  >
-                    {preset.title}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {skill.materialHint && MaterialSection}
 
-            {/* STEP 1: Setting Context Parameters */}
-            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col gap-4">
+            {/* STEP 1 */}
+            <section className="bg-white p-4 sm:p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col gap-4">
               <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <h4 className="text-xs font-bold text-blue-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <Sliders className="w-3.5 h-3.5 text-blue-600" />
-                  STEP 1：設定通用教學情境
-                </h4>
+                <h3 className="text-sm font-bold text-blue-900 flex items-center gap-1.5">
+                  <Sliders className="w-4 h-4 text-blue-600" aria-hidden="true" />
+                  STEP 1　設定教學情境
+                  <span className="text-[11px] font-medium text-slate-400 ml-1">
+                    {completeness.filled}/{completeness.total}
+                  </span>
+                </h3>
                 <button
+                  type="button"
                   onClick={onResetContext}
                   className="text-xs text-slate-500 hover:text-slate-800 flex items-center gap-1 transition-colors"
                 >
-                  <RotateCcw className="w-3 h-3" />
-                  重置
+                  <RotateCcw className="w-3 h-3" aria-hidden="true" />
+                  清空
                 </button>
               </div>
 
-              {/* Stage & Subject */}
+              <div>
+                <p className="text-xs font-semibold text-slate-600 flex items-center gap-1.5 mb-1.5">
+                  <BookmarkCheck className="w-3.5 h-3.5 text-blue-600" aria-hidden="true" />
+                  快速套用研習範例
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {scenarioPresets.map((preset) => {
+                    const on = preset.id === activePresetId;
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => applyPreset(preset.id)}
+                        className={`text-xs px-2.5 py-1 rounded-lg transition-colors border font-medium text-left ${
+                          on
+                            ? 'bg-blue-100 text-blue-900 border-blue-300'
+                            : 'bg-slate-100 hover:bg-blue-50 hover:text-blue-900 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        {preset.title}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  <label htmlFor="ctx-stage" className="text-xs font-semibold text-slate-700 block mb-1">
                     教育階段
                   </label>
                   <select
+                    id="ctx-stage"
                     value={context.stage}
                     onChange={(e) => onUpdateContext({ stage: e.target.value })}
-                    className="w-full border border-slate-300 rounded-lg px-2.5 py-2 text-xs sm:text-sm bg-white focus:ring-2 focus:ring-blue-800 focus:border-transparent outline-none"
+                    className={inputCls}
                   >
                     <option value="">請選擇</option>
                     {stageOptions.map((st) => (
-                      <option key={st} value={st}>{st}</option>
+                      <option key={st} value={st}>
+                        {st}
+                      </option>
                     ))}
                   </select>
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  <label htmlFor="ctx-subject" className="text-xs font-semibold text-slate-700 block mb-1">
                     任教科目
                   </label>
                   <input
+                    id="ctx-subject"
                     type="text"
                     value={context.subject}
                     onChange={(e) => onUpdateContext({ subject: e.target.value })}
                     placeholder="例如：國中數學、高中英文"
-                    className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm focus:ring-2 focus:ring-blue-800 focus:border-transparent outline-none"
+                    className={inputCls}
                   />
                 </div>
               </div>
 
-              {/* Common Subject Quick Chips */}
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1 -mt-2">
                 {commonSubjects.map((sub) => (
                   <button
                     key={sub}
@@ -368,38 +439,32 @@ export const SkillModal: React.FC<SkillModalProps> = ({
                 ))}
               </div>
 
-              {/* Unit / Topic */}
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  單元 / 教學主題
+                <label htmlFor="ctx-topic" className="text-xs font-semibold text-slate-700 block mb-1">
+                  單元 / 教學主題 <span className="text-rose-500">*</span>
                 </label>
                 <input
+                  id="ctx-topic"
                   type="text"
                   value={context.topic}
                   onChange={(e) => onUpdateContext({ topic: e.target.value })}
                   placeholder="例如：畢氏定理的應用、光合作用與呼吸作用"
-                  className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm focus:ring-2 focus:ring-blue-800 focus:border-transparent outline-none"
+                  className={inputCls}
                 />
               </div>
 
-              {/* Pedagogies Toggle Chips */}
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1.5">
-                  預計採用教學法 (可多選)
-                </label>
+              <fieldset>
+                <legend className="text-xs font-semibold text-slate-700 mb-1.5">預計採用教學法（可多選）</legend>
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {pedagogyOptions.map((ped) => {
-                    const isSelected = context.pedagogies.includes(ped);
+                    const on = context.pedagogies.includes(ped);
                     return (
                       <button
                         key={ped}
                         type="button"
-                        onClick={() => handleTogglePedagogy(ped)}
-                        className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${
-                          isSelected
-                            ? 'bg-blue-900 text-white border-blue-900 shadow-xs font-medium'
-                            : 'bg-white text-slate-600 border-slate-300 hover:border-blue-900 hover:text-blue-900'
-                        }`}
+                        aria-pressed={on}
+                        onClick={() => onUpdateContext({ pedagogies: toggleIn(context.pedagogies, ped) })}
+                        className={chipCls(on)}
                       >
                         {ped}
                       </button>
@@ -408,31 +473,26 @@ export const SkillModal: React.FC<SkillModalProps> = ({
                 </div>
                 <input
                   type="text"
+                  aria-label="其他自訂教學法"
                   value={context.pedagogyCustom}
                   onChange={(e) => onUpdateContext({ pedagogyCustom: e.target.value })}
-                  placeholder="其他自訂教學法填寫..."
-                  className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-blue-800 focus:border-transparent outline-none bg-slate-50/50"
+                  placeholder="其他教學法（自填）"
+                  className={`${inputCls} py-1.5 bg-slate-50/60`}
                 />
-              </div>
+              </fieldset>
 
-              {/* Assessment Formats Toggle Chips */}
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1.5">
-                  預期評量 / 作業型態 (可多選)
-                </label>
+              <fieldset>
+                <legend className="text-xs font-semibold text-slate-700 mb-1.5">預期評量 / 作業型態（可多選）</legend>
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {assessmentOptions.map((asm) => {
-                    const isSelected = context.assessments.includes(asm);
+                    const on = context.assessments.includes(asm);
                     return (
                       <button
                         key={asm}
                         type="button"
-                        onClick={() => handleToggleAssessment(asm)}
-                        className={`text-xs px-2.5 py-1 rounded-lg border transition-all ${
-                          isSelected
-                            ? 'bg-blue-900 text-white border-blue-900 shadow-xs font-medium'
-                            : 'bg-white text-slate-600 border-slate-300 hover:border-blue-900 hover:text-blue-900'
-                        }`}
+                        aria-pressed={on}
+                        onClick={() => onUpdateContext({ assessments: toggleIn(context.assessments, asm) })}
+                        className={chipCls(on)}
                       >
                         {asm}
                       </button>
@@ -441,265 +501,271 @@ export const SkillModal: React.FC<SkillModalProps> = ({
                 </div>
                 <input
                   type="text"
+                  aria-label="其他自訂評量型態"
                   value={context.assessmentCustom}
                   onChange={(e) => onUpdateContext({ assessmentCustom: e.target.value })}
-                  placeholder="其他自訂評量型態填寫..."
-                  className="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-blue-800 focus:border-transparent outline-none bg-slate-50/50"
+                  placeholder="其他評量型態（自填）"
+                  className={`${inputCls} py-1.5 bg-slate-50/60`}
                 />
-              </div>
+              </fieldset>
 
-              {/* Special Needs & Situation */}
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  學生狀況與特殊需求 (選填)
+                <label htmlFor="ctx-extra" className="text-xs font-semibold text-slate-700 block mb-1">
+                  學生狀況與特殊需求（選填）
                 </label>
                 <textarea
+                  id="ctx-extra"
                   value={context.extra}
                   onChange={(e) => onUpdateContext({ extra: e.target.value })}
-                  placeholder="例如：班上有雙峰學習落差、需融入 SDGs 議題、需提供具體評量規準表格..."
-                  className="w-full border border-slate-300 rounded-lg p-2.5 text-xs sm:text-sm focus:ring-2 focus:ring-blue-800 focus:border-transparent outline-none resize-none h-18"
+                  placeholder="例如：班上有雙峰學習落差、需融入 SDGs 議題、需提供具體評量規準表格…"
+                  className={`${inputCls} resize-y min-h-20 leading-relaxed`}
                 />
               </div>
-            </div>
+            </section>
+
+            {!skill.materialHint &&
+              (showMaterial ? (
+                MaterialSection
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowMaterial(true)}
+                  className="text-sm text-blue-800 hover:text-blue-950 font-medium flex items-center gap-1.5 self-start px-1"
+                >
+                  <Paperclip className="w-4 h-4" aria-hidden="true" />
+                  ＋ 加入附加素材（學生作答、數據、文獻…）
+                </button>
+              ))}
           </div>
 
-          {/* Right Column: Prompt & AI Generation Preview */}
-          <div className="w-full lg:w-7/12 p-5 sm:p-6 flex flex-col bg-slate-50/40 overflow-y-auto">
-            
-            {/* Top Toolbar */}
+          {/* Right: Prompt 與生成成果 */}
+          <div
+            ref={rightColRef}
+            className="w-full lg:w-7/12 p-4 sm:p-6 flex flex-col bg-white lg:overflow-y-auto scroll-mt-2 border-t lg:border-t-0 border-slate-200"
+          >
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3 shrink-0">
-              
-              {/* Segmented Tab */}
-              <div className="flex bg-slate-200/80 p-1 rounded-xl">
+              <div role="tablist" aria-label="檢視" className="flex bg-slate-200/80 p-1 rounded-xl self-start">
                 <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'prompt'}
                   onClick={() => setActiveTab('prompt')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
-                    activeTab === 'prompt'
-                      ? 'bg-white text-blue-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
+                  className={`px-3 py-1.5 text-sm font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
+                    activeTab === 'prompt' ? 'bg-white text-blue-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  <Terminal className="w-3.5 h-3.5" />
-                  Prompt 提示詞
+                  <Terminal className="w-4 h-4" aria-hidden="true" />
+                  STEP 2　Prompt
                 </button>
                 <button
+                  type="button"
+                  role="tab"
+                  aria-selected={activeTab === 'output'}
                   onClick={() => setActiveTab('output')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
-                    activeTab === 'output'
-                      ? 'bg-white text-blue-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
+                  className={`px-3 py-1.5 text-sm font-semibold rounded-lg transition-all flex items-center gap-1.5 ${
+                    activeTab === 'output' ? 'bg-white text-blue-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  AI 生成成果
-                  {aiOutput && (
-                    <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />
+                  <Sparkles className="w-4 h-4 text-amber-500" aria-hidden="true" />
+                  AI 成果
+                  {(output || isGenerating) && (
+                    <span
+                      className={`w-2 h-2 rounded-full inline-block ${isGenerating ? 'bg-indigo-500 animate-pulse' : 'bg-emerald-500'}`}
+                      aria-hidden="true"
+                    />
                   )}
                 </button>
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center gap-2">
-                
-                {/* Generate Button */}
-                <button
-                  onClick={handleGenerate}
-                  disabled={isGenerating}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3.5 py-2 rounded-xl shadow-xs transition-all flex items-center gap-1.5 disabled:opacity-60 whitespace-nowrap cursor-pointer"
-                >
-                  {isGenerating ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>正在生成中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                      <span>即時 AI 生成示範</span>
-                    </>
-                  )}
-                </button>
-
-                {/* Copy Button */}
+              <div className="hidden lg:flex items-center gap-2">
+                {renderGenerateButton()}
                 {activeTab === 'prompt' ? (
-                  <button
-                    onClick={handleCopyPrompt}
-                    className={`text-xs font-semibold px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-xs whitespace-nowrap ${
-                      copied
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-blue-900 hover:bg-blue-800 text-white'
-                    }`}
-                  >
-                    {copied ? (
-                      <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>已複製！</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>一鍵複製 Prompt</span>
-                      </>
-                    )}
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleCopyOutput}
-                    disabled={!aiOutput}
-                    className={`text-xs font-semibold px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-xs whitespace-nowrap disabled:opacity-50 ${
-                      copiedOutput
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-blue-900 hover:bg-blue-800 text-white'
-                    }`}
-                  >
-                    {copiedOutput ? (
-                      <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>成果已複製！</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>複製生成文字</span>
-                      </>
-                    )}
-                  </button>
-                )}
-
-                {/* Export Markdown */}
-                <button
-                  onClick={handleDownloadOutput}
-                  title="匯出為 Markdown 檔案"
-                  className="p-2 bg-white hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-300 shadow-xs transition-colors"
-                >
-                  <FileDown className="w-4 h-4" />
-                </button>
+                  <>
+                    {renderCopyPromptButton()}
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadMd('prompt')}
+                      title="下載 Prompt（.md）"
+                      aria-label="下載 Prompt"
+                      className="p-2 bg-white hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-300 shadow-xs transition-colors"
+                    >
+                      <FileDown className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                  </>
+                ) : null}
               </div>
             </div>
 
-            {/* Display Area */}
-            <div className="flex-1 min-h-[350px] relative rounded-xl overflow-hidden border border-slate-300 bg-white flex flex-col shadow-inner">
-              
+            {/* Display */}
+            <div className="lg:flex-1 lg:min-h-0 relative rounded-xl border border-slate-300 bg-white flex flex-col shadow-inner overflow-hidden">
               {activeTab === 'prompt' ? (
-                /* Prompt Display */
-                <div className="flex-1 flex flex-col h-full">
-                  <div className="bg-slate-100/80 px-4 py-2 border-b border-slate-200 text-xs text-slate-500 flex items-center justify-between">
+                <div className="flex-1 flex flex-col min-h-0">
+                  <div className="bg-slate-100/80 px-4 py-2 border-b border-slate-200 text-xs text-slate-500 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
                     <span className="font-mono">
-                      字數：{finalPrompt.length} 字 · 格式：繁體中文 (108課綱標準)
+                      {finalPrompt.length} 字 · 情境 {completeness.filled}/{completeness.total}
                     </span>
-                    <span className="text-slate-400">即時組合完畢</span>
+                    <span className="flex items-center gap-1 text-slate-400">
+                      <Pencil className="w-3 h-3" aria-hidden="true" />
+                      可直接修改文字
+                    </span>
                   </div>
+                  {customPrompt !== null ? (
+                    <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-900 flex items-center justify-between gap-3">
+                      <span>你已手動修改 Prompt，左側情境的變更不會自動套入。</span>
+                      <button
+                        type="button"
+                        onClick={() => setCustomPrompt(null)}
+                        className="shrink-0 font-semibold underline underline-offset-2 hover:text-amber-950"
+                      >
+                        還原自動組合
+                      </button>
+                    </div>
+                  ) : !completeness.hasTopic ? (
+                    <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-900 flex items-center gap-2">
+                      <TriangleAlert className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                      尚未填寫「單元主題」，AI 會自行假設。建議先套用範例或填寫左側情境。
+                    </div>
+                  ) : null}
                   <textarea
-                    readOnly
+                    aria-label="Prompt 內容（可編輯）"
                     value={finalPrompt}
-                    className="flex-1 w-full p-4 text-xs sm:text-sm font-mono text-slate-800 resize-none outline-none leading-relaxed bg-white selection:bg-blue-200"
+                    onChange={(e) => setCustomPrompt(e.target.value)}
+                    spellCheck={false}
+                    className="flex-1 w-full min-h-[55dvh] lg:min-h-0 p-4 text-sm font-mono text-slate-800 resize-none outline-none leading-relaxed bg-white selection:bg-blue-200"
                   />
                 </div>
               ) : (
-                /* AI Output Display */
-                <div className="flex-1 flex flex-col h-full overflow-y-auto">
-                  <div className="bg-slate-100/80 px-4 py-2 border-b border-slate-200 text-xs text-slate-600 flex items-center justify-between">
-                    <span className="font-medium flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                      Gemini 2.5 Flash 生成結果
+                <div className="flex-1 flex flex-col min-h-0">
+                  <div className="bg-slate-100/80 px-3 sm:px-4 py-2 border-b border-slate-200 text-xs text-slate-600 flex items-center justify-between gap-2">
+                    <span className="font-medium flex items-center gap-1.5 min-w-0">
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" aria-hidden="true" />
+                      <span className="truncate">
+                        {isGenerating ? `${modelLabel} 生成中…` : output ? `${modelLabel} 生成結果` : 'AI 生成成果'}
+                      </span>
+                      {output && <span className="text-slate-400 font-mono shrink-0">· {output.length} 字</span>}
                     </span>
-                    {aiOutput && (
-                      <span className="text-slate-400 font-mono">
-                        {aiOutput.length} 字
+                    {output && !isGenerating && (
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={handleCopyOutput}
+                          title="複製成果（貼到 Word／Google 文件會保留標題與表格）"
+                          className={`px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1 transition-colors ${
+                            copied === 'output' ? 'bg-emerald-600 text-white' : 'bg-blue-900 hover:bg-blue-800 text-white'
+                          }`}
+                        >
+                          {copied === 'output' ? <Check className="w-3.5 h-3.5" aria-hidden="true" /> : <Copy className="w-3.5 h-3.5" aria-hidden="true" />}
+                          {copied === 'output' ? '已複製' : '複製'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDownloadWord}
+                          title="下載 Word 檔"
+                          className="px-2.5 py-1 rounded-lg font-semibold flex items-center gap-1 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700"
+                        >
+                          <FileText className="w-3.5 h-3.5" aria-hidden="true" />
+                          Word
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadMd('output')}
+                          title="下載 Markdown 檔"
+                          aria-label="下載 Markdown 檔"
+                          className="px-2 py-1 rounded-lg font-semibold bg-white border border-slate-300 hover:bg-slate-50 text-slate-700"
+                        >
+                          MD
+                        </button>
                       </span>
                     )}
                   </div>
 
-                  {isGenerating ? (
-                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500">
-                      <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mb-3" />
-                      <p className="text-sm font-semibold text-slate-800">
-                        正在依據 108 課綱與情境規劃生成中...
-                      </p>
-                      <p className="text-xs text-slate-400 mt-1">
-                        為您整合教學法、評量規準與具體課堂師生流程
-                      </p>
-                    </div>
-                  ) : errorMessage ? (
-                    <div className="flex-1 p-6 flex flex-col items-center justify-center text-center">
-                      <div className="w-12 h-12 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mb-3">
-                        <Info className="w-6 h-6" />
+                  <div className="flex-1 min-h-[40dvh] lg:min-h-0 overflow-y-auto" aria-live="polite" aria-busy={isGenerating}>
+                    {output ? (
+                      <div className="p-4 sm:p-5">
+                        <Markdown ref={outputRef} text={output} className={isGenerating ? 'typing-caret' : ''} />
                       </div>
-                      <h5 className="text-sm font-bold text-slate-800 mb-1">
-                        提示訊息
-                      </h5>
-                      <p className="text-xs text-slate-600 max-w-md leading-relaxed mb-4">
-                        {errorMessage}
-                      </p>
-                      <button
-                        onClick={handleCopyPrompt}
-                        className="bg-blue-900 hover:bg-blue-800 text-white text-xs font-semibold px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                        複製 Prompt 前往外部 AI 使用
-                      </button>
-                    </div>
-                  ) : aiOutput ? (
-                    <div className="p-5 text-xs sm:text-sm text-slate-800 leading-relaxed font-sans whitespace-pre-wrap select-text">
-                      {aiOutput}
-                    </div>
-                  ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400">
-                      <Sparkles className="w-10 h-10 text-slate-200 mb-2" />
-                      <p className="text-sm font-medium text-slate-600">
-                        尚未進行即時生成
-                      </p>
-                      <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                        點擊右上角「即時 AI 生成示範」按鈕，立即預覽教案或教材成果，或點擊「一鍵複製 Prompt」貼到外部 AI。
-                      </p>
-                    </div>
-                  )}
+                    ) : isGenerating ? (
+                      <div className="h-full min-h-[40dvh] flex flex-col items-center justify-center p-8 text-center text-slate-500">
+                        <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mb-3" aria-hidden="true" />
+                        <p className="text-sm font-semibold text-slate-800">正在依據 108 課綱與情境規劃生成中…</p>
+                        <p className="text-xs text-slate-400 mt-1">文字會逐段出現，可隨時按「停止生成」</p>
+                      </div>
+                    ) : !errorMessage ? (
+                      <div className="h-full min-h-[40dvh] flex flex-col items-center justify-center p-8 text-center">
+                        <Sparkles className="w-10 h-10 text-slate-200 mb-2" aria-hidden="true" />
+                        <p className="text-sm font-medium text-slate-600">尚未進行即時生成</p>
+                        <p className="text-xs text-slate-500 mt-1 max-w-sm leading-relaxed">
+                          {aiStatus === null
+                            ? '正在確認 AI 生成服務…'
+                            : canGenerate
+                              ? '按「即時 AI 生成」在本站預覽成果，或「複製 Prompt」貼到外部 AI。'
+                              : '此網站目前未連接 AI 生成服務。請按「複製 Prompt」，再到下方的 ChatGPT、Claude 或 Gemini 貼上使用。'}
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {errorMessage && (
+                      <div className="m-4 p-4 rounded-xl border border-amber-200 bg-amber-50 flex flex-col sm:flex-row sm:items-center gap-3">
+                        <Info className="w-5 h-5 text-amber-600 shrink-0" aria-hidden="true" />
+                        <p className="text-sm text-amber-950 leading-relaxed flex-1">{errorMessage}</p>
+                        <button
+                          type="button"
+                          onClick={handleCopyPrompt}
+                          className="shrink-0 bg-blue-900 hover:bg-blue-800 text-white text-xs font-semibold px-3 py-2 rounded-lg transition-colors flex items-center gap-1.5"
+                        >
+                          <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                          {copied === 'prompt' ? '已複製！' : '複製 Prompt'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* Quick External Tools Navigation */}
-            <div className="mt-4 pt-3 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+            {/* 外部 AI */}
+            <div className="mt-4 pt-3 border-t border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-slate-500">
               <span className="flex items-center gap-1">
-                <Info className="w-3.5 h-3.5 text-blue-600" />
-                複製後，可直接前往常用 AI 平台貼上使用：
+                <Info className="w-3.5 h-3.5 text-blue-600" aria-hidden="true" />
+                點下方按鈕會自動複製 Prompt 並開啟，貼上（Ctrl / ⌘ + V）即可：
               </span>
               <div className="flex items-center gap-2">
-                <a
-                  href="https://chatgpt.com/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={handleCopyPrompt}
-                  className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 font-medium transition-colors flex items-center gap-1"
-                >
-                  <span>ChatGPT</span>
-                  <ExternalLink className="w-3 h-3 text-slate-400" />
-                </a>
-                <a
-                  href="https://claude.ai/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={handleCopyPrompt}
-                  className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 font-medium transition-colors flex items-center gap-1"
-                >
-                  <span>Claude</span>
-                  <ExternalLink className="w-3 h-3 text-slate-400" />
-                </a>
-                <a
-                  href="https://gemini.google.com/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={handleCopyPrompt}
-                  className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 font-medium transition-colors flex items-center gap-1"
-                >
-                  <span>Gemini</span>
-                  <ExternalLink className="w-3 h-3 text-slate-400" />
-                </a>
+                {EXTERNAL_AI.map((t) => (
+                  <a
+                    key={t.name}
+                    href={t.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={handleCopyPrompt}
+                    className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 font-medium transition-colors flex items-center gap-1"
+                  >
+                    {t.name}
+                    <ExternalLink className="w-3 h-3 text-slate-400" aria-hidden="true" />
+                  </a>
+                ))}
               </div>
             </div>
           </div>
         </div>
 
+        {/* 手機底部操作列 */}
+        <div className="lg:hidden shrink-0 border-t border-slate-200 bg-white px-4 py-3 flex gap-2 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          {renderCopyPromptButton(true)}
+          {canGenerate ? (
+            renderGenerateButton(true)
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('prompt');
+                rightColRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              className="flex-1 text-sm font-semibold px-3.5 py-2 rounded-xl border border-slate-300 text-slate-700 bg-white"
+            >
+              檢視 Prompt
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
