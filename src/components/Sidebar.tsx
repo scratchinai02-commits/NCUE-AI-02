@@ -15,6 +15,7 @@ import {
   Laptop,
   Tv,
   ShieldCheck,
+  Wrench,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -25,6 +26,7 @@ interface SidebarProps {
 }
 
 const ICONS: Record<CategoryId, React.ReactNode> = {
+  tools: <Wrench className="w-4 h-4 text-teal-600" />,
   top5: <Award className="w-4 h-4 text-amber-500" />,
   cat1: <BookOpen className="w-4 h-4 text-blue-600" />,
   cat2: <Layers className="w-4 h-4 text-emerald-600" />,
@@ -47,8 +49,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentCategory, onSelectCateg
     <aside className="w-full md:w-64 lg:w-72 bg-white border-b md:border-b-0 md:border-r border-slate-200 md:shrink-0 md:sticky md:top-0 md:self-start md:max-h-screen md:overflow-y-auto">
       <nav aria-label="技能分類" className="p-3 md:p-4 md:border-b border-slate-100">
         <div className="hidden md:flex items-center justify-between mb-3 px-1">
-          <span className="text-xs font-bold text-slate-400 tracking-wider">研習技能分類</span>
-          <span className="text-xs text-slate-400 font-mono">{counts.all} 個技能</span>
+          <span className="text-xs font-bold text-slate-400 tracking-wider">工具與技能</span>
+          <span className="text-xs text-slate-400 font-mono">{counts.tools} 工具 · {counts.all} 技能</span>
         </div>
 
         <ul className="flex md:flex-col gap-1.5 overflow-x-auto md:overflow-visible scrollbar-none -mx-3 px-3 md:mx-0 md:px-0">
@@ -56,7 +58,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentCategory, onSelectCateg
             const isActive = currentCategory === cat.id && !dimmed;
             const count = counts[cat.id];
             return (
-              <li key={cat.id} className="shrink-0 md:shrink">
+              <li key={cat.id} className={`shrink-0 md:shrink ${cat.id === 'tools' ? 'md:pb-2 md:mb-1 md:border-b md:border-slate-100' : ''}`}>
                 <button
                   type="button"
                   onClick={() => onSelectCategory(cat.id)}
@@ -78,8 +80,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentCategory, onSelectCateg
                       className={`text-[11px] min-w-6 text-center px-1.5 py-0.5 rounded-full font-semibold tabular-nums ${
                         isActive
                           ? 'bg-white/20 text-white'
-                          : cat.id === 'top5' || cat.id === 'favorites'
-                            ? 'bg-amber-100 text-amber-800'
+                          : cat.id === 'tools'
+                            ? 'bg-teal-100 text-teal-800'
+                            : cat.id === 'top5' || cat.id === 'favorites'
+                              ? 'bg-amber-100 text-amber-800'
                             : 'bg-slate-200/70 text-slate-500'
                       }`}
                     >

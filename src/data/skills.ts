@@ -276,6 +276,7 @@ export const skillsData: Skill[] = [
 ];
 
 export const categories: Category[] = [
+  { id: 'tools', name: 'AI 工具箱', badge: '常用', description: '學生與教授最常用的 AI 工具：上傳 PDF、圖片或貼上文字就能用，可以連續追問，成果可下載成 Word' },
   { id: 'top5', name: '必學 Top 5', badge: '研習核心', description: '師資培育研習最推薦優先上手的 5 個核心教學實戰技能' },
   { id: 'cat1', name: '教案設計與課程規劃', description: '課綱轉化、UbD 逆向設計、PBL 專題與 TPACK 跨領域教學架構' },
   { id: 'cat2', name: '教材開發與教學活動', description: '簡報腳本、差異化學習單、遊戲化闖關與互動數位教材' },

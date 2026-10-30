@@ -1,4 +1,5 @@
 import type { AiStatus, Role } from '../types';
+import type { ToolId } from '../data/tools';
 
 const ERROR_MARKER = '[[STREAM_ERROR]]';
 
@@ -18,27 +19,23 @@ export async function fetchAiStatus(): Promise<AiStatus> {
   }
 }
 
-/** 串流生成：每收到一段文字就呼叫 onText(目前累積的全文)。 */
-export async function streamGenerate(opts: {
-  prompt: string;
-  role: Role;
-  signal: AbortSignal;
-  onText: (fullText: string) => void;
-}): Promise<string> {
-  const res = await fetch('/api/generate-stream', {
+/** POST 後以串流讀取文字；每收到一段就呼叫 onText(目前累積的全文)。 */
+async function streamPost(url: string, body: unknown, signal: AbortSignal, onText: (fullText: string) => void): Promise<string> {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: opts.prompt, role: opts.role }),
-    signal: opts.signal,
+    body: JSON.stringify(body),
+    signal,
   });
 
   if (!res.ok) {
-    let msg = '生成失敗，請確認網路，或複製 Prompt 至外部 AI 工具使用。';
+    let msg = '生成失敗，請確認網路，或複製到外部 AI 工具使用。';
     try {
       const data = await res.json();
       if (data?.error) msg = data.error;
     } catch {
-      if (res.status === 404) msg = '此網站目前沒有連接 AI 生成服務，請點「複製 Prompt」到外部 AI 使用。';
+      if (res.status === 404) msg = '此網站目前沒有連接 AI 生成服務，請點「複製」到外部 AI 使用。';
+      if (res.status === 413) msg = '內容或檔案太大，請縮小後再試。';
     }
     throw new Error(msg);
   }
@@ -54,7 +51,7 @@ export async function streamGenerate(opts: {
       if (done) break;
       full += decoder.decode(value, { stream: true });
       const cut = full.indexOf(ERROR_MARKER);
-      opts.onText(cut >= 0 ? full.slice(0, cut).trimEnd() : full);
+      onText(cut >= 0 ? full.slice(0, cut).trimEnd() : full);
     }
     full += decoder.decode();
   }
@@ -62,11 +59,39 @@ export async function streamGenerate(opts: {
   const cut = full.indexOf(ERROR_MARKER);
   if (cut >= 0) {
     const partial = full.slice(0, cut).trimEnd();
-    opts.onText(partial);
-    const err = new Error(full.slice(cut + ERROR_MARKER.length).trim() || '生成過程中斷。');
-    (err as Error & { partial?: string }).partial = partial;
-    throw err;
+    onText(partial);
+    throw new Error(full.slice(cut + ERROR_MARKER.length).trim() || '生成過程中斷。');
   }
-  opts.onText(full);
+  onText(full);
   return full;
+}
+
+/** 技能：串流生成 */
+export function streamGenerate(opts: { prompt: string; role: Role; signal: AbortSignal; onText: (fullText: string) => void }) {
+  return streamPost('/api/generate-stream', { prompt: opts.prompt, role: opts.role }, opts.signal, opts.onText);
+}
+
+export interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+}
+
+export interface UploadedFile {
+  name: string;
+  mimeType: string;
+  size: number;
+  /** base64（不含 data: 前綴） */
+  data: string;
+}
+
+/** AI 工具箱：串流生成（可附檔、可追問） */
+export function streamTool(opts: {
+  tool: ToolId;
+  messages: ChatMessage[];
+  file: UploadedFile | null;
+  signal: AbortSignal;
+  onText: (fullText: string) => void;
+}) {
+  const file = opts.file ? { name: opts.file.name, mimeType: opts.file.mimeType, data: opts.file.data } : undefined;
+  return streamPost('/api/tool-stream', { tool: opts.tool, messages: opts.messages, file }, opts.signal, opts.onText);
 }

@@ -6,6 +6,9 @@ import { Sidebar } from './components/Sidebar';
 import { SkillCard } from './components/SkillCard';
 import { SkillModal, SkillDraft } from './components/SkillModal';
 import { QuickGuideModal } from './components/QuickGuideModal';
+import { ToolCard } from './components/ToolCard';
+import { ToolModal, ToolDraft } from './components/ToolModal';
+import { TOOLS, ToolDef } from './data/tools';
 import { BANNER_IMAGE_URL } from './components/HeroBanner';
 import { fetchAiStatus } from './lib/api';
 import { loadJSON, saveJSON } from './lib/utils';
@@ -28,7 +31,7 @@ const STORAGE = {
   role: 'ncue_ai_role',
 };
 
-const skillCategories = categories.filter((c) => c.id !== 'all' && c.id !== 'favorites' && c.id !== 'top5');
+const skillCategories = categories.filter((c) => !['all', 'favorites', 'top5', 'tools'].includes(c.id));
 const categoryName = (id: string) => categories.find((c) => c.id === id)?.name || '教學模組';
 
 /** 搜尋計分：標題 > 標籤 / 編號 > 說明 > Prompt 內文；多個關鍵字需全部命中 */
@@ -57,6 +60,8 @@ export default function App() {
     ...loadJSON<Partial<TeachingContext>>(STORAGE.context, {}),
   }));
   const [activeSkill, setActiveSkill] = useState<Skill | null>(null);
+  const [activeTool, setActiveTool] = useState<ToolDef | null>(null);
+  const [toolDrafts, setToolDrafts] = useState<Record<string, ToolDraft>>({});
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
   const [drafts, setDrafts] = useState<Record<string, SkillDraft>>({});
@@ -78,14 +83,14 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (e.key === '/' && !activeSkill && !isGuideOpen && tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+      if (e.key === '/' && !activeSkill && !activeTool && !isGuideOpen && tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
         e.preventDefault();
         searchRef.current?.focus();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [activeSkill, isGuideOpen]);
+  }, [activeSkill, activeTool, isGuideOpen]);
 
   const toggleFavorite = (id: string) => {
     setFavorites((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
@@ -98,6 +103,10 @@ export default function App() {
   const closeSkill = useCallback(() => setActiveSkill(null), []);
   const saveDraft = useCallback((id: string, patch: SkillDraft) => {
     setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  }, []);
+  const closeTool = useCallback(() => setActiveTool(null), []);
+  const saveToolDraft = useCallback((id: string, draft: ToolDraft) => {
+    setToolDrafts((prev) => ({ ...prev, [id]: draft }));
   }, []);
 
   const openSkillById = (id: string) => {
@@ -114,7 +123,7 @@ export default function App() {
   };
 
   const counts = useMemo(() => {
-    const c = { all: skillsData.length, top5: 0, favorites: favorites.length } as Record<CategoryId, number>;
+    const c = { all: skillsData.length, top5: 0, favorites: favorites.length, tools: TOOLS.length } as Record<CategoryId, number>;
     for (const cat of skillCategories) c[cat.id] = 0;
     for (const s of skillsData) {
       c[s.cat]++;
@@ -135,6 +144,8 @@ export default function App() {
         .map((x) => x.s);
     }
     switch (currentCategory) {
+      case 'tools':
+        return [];
       case 'top5':
         return skillsData.filter((s) => s.top);
       case 'favorites':
@@ -146,6 +157,13 @@ export default function App() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentCategory, searchQuery, favorites]);
+
+  const matchedTools = useMemo(
+    () => (isSearching ? TOOLS.filter((t) => terms.every((term) => `${t.title}${t.tagline}${t.desc}`.toLowerCase().includes(term))) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [searchQuery],
+  );
+  const showTools = currentCategory === 'tools' && !isSearching;
 
   const activeCategoryMeta = categories.find((c) => c.id === currentCategory) || categories[0];
 
@@ -198,12 +216,20 @@ export default function App() {
                 <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
                   {isSearching ? `搜尋「${searchQuery.trim()}」` : activeCategoryMeta.name}
                 </h2>
-                <span className="shrink-0 text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-900">
-                  {visibleSkills.length} 個技能
+                <span
+                  className={`shrink-0 text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full ${
+                    showTools ? 'bg-teal-100 text-teal-900' : 'bg-blue-100 text-blue-900'
+                  }`}
+                >
+                  {showTools
+                    ? `${TOOLS.length} 個工具`
+                    : isSearching
+                      ? `${visibleSkills.length + matchedTools.length} 個結果`
+                      : `${visibleSkills.length} 個技能`}
                 </span>
               </div>
               <p className="text-sm text-slate-500">
-                {isSearching ? '搜尋範圍：全部分類（技能名稱、標籤、說明與 Prompt 內文）' : activeCategoryMeta.description}
+                {isSearching ? '搜尋範圍：AI 工具箱與全部技能（名稱、標籤、說明與 Prompt 內文）' : activeCategoryMeta.description}
               </p>
             </div>
 
@@ -253,7 +279,35 @@ export default function App() {
             </div>
           )}
 
-          {visibleSkills.length === 0 ? (
+          {matchedTools.length > 0 && (
+            <section aria-label="符合的 AI 工具" className="mb-8">
+              <h3 className="text-sm font-bold text-teal-800 mb-3">AI 工具</h3>
+              <div className={grid}>
+                {matchedTools.map((t) => (
+                  <ToolCard key={t.id} tool={t} onOpen={setActiveTool} hasConversation={Boolean(toolDrafts[t.id]?.messages?.length)} />
+                ))}
+              </div>
+              {visibleSkills.length > 0 && <h3 className="text-sm font-bold text-blue-900 mt-8 -mb-1">教學技能</h3>}
+            </section>
+          )}
+
+          {showTools ? (
+            <div className="space-y-5">
+              <div className={grid}>
+                {TOOLS.map((t) => (
+                  <ToolCard key={t.id} tool={t} onOpen={setActiveTool} hasConversation={Boolean(toolDrafts[t.id]?.messages?.length)} />
+                ))}
+              </div>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                {aiStatus === null
+                  ? '正在確認 AI 服務…'
+                  : aiStatus.available
+                    ? '工具由 Gemini 即時處理；上傳的檔案只用於這次對話，不會保存在網站上。'
+                    : '此網站目前未連接 AI 服務：工具仍可使用「複製指令」，再到 Gemini 官網貼上並上傳檔案。'}
+              </p>
+            </div>
+          ) : visibleSkills.length === 0 ? (
+            matchedTools.length > 0 ? null : (
             <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
               <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mb-3">
                 {currentCategory === 'favorites' && !isSearching ? <Star className="w-6 h-6" /> : <Search className="w-6 h-6" />}
@@ -284,6 +338,7 @@ export default function App() {
                 </>
               )}
             </div>
+            )
           ) : currentCategory === 'all' && !isSearching ? (
             <div className="space-y-10">
               {skillCategories.map((cat) => {
@@ -327,6 +382,17 @@ export default function App() {
           aiStatus={aiStatus}
           draft={drafts[activeSkill.id] || {}}
           onSaveDraft={saveDraft}
+        />
+      )}
+
+      {activeTool && (
+        <ToolModal
+          key={activeTool.id}
+          tool={activeTool}
+          aiStatus={aiStatus}
+          draft={toolDrafts[activeTool.id] || {}}
+          onSaveDraft={saveToolDraft}
+          onClose={closeTool}
         />
       )}
 

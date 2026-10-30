@@ -29,7 +29,7 @@ const steps = [
   ['填情境', '教育階段、科目、單元、教學法只要填一次（或套用範例），所有技能共用，下次開啟也會記得。'],
   ['看 Prompt', '右側即時組合完整 Prompt，可直接修改文字；需要時在「附加素材」貼上學生作答或數據。'],
   ['複製或生成', '一鍵複製到 ChatGPT／Claude／Gemini，或在本站即時生成（需站方設定 API 金鑰）。'],
-  ['帶走成果', '生成結果可複製（貼到 Word 保留表格格式）、下載 Word 或 Markdown 檔。'],
+  ['帶走成果', '生成結果可複製（貼到 Word 保留表格格式）、下載 Word（.docx）或 Markdown 檔。'],
 ];
 
 export const QuickGuideModal: React.FC<QuickGuideModalProps> = ({ isOpen, onClose, onOpenSkill }) => {
@@ -113,6 +113,13 @@ export const QuickGuideModal: React.FC<QuickGuideModalProps> = ({ isOpen, onClos
                 </li>
               ))}
             </ol>
+          </section>
+
+          <section className="p-4 rounded-xl border border-teal-200 bg-teal-50/60">
+            <h3 className="font-bold text-teal-900 mb-1.5">AI 工具箱（側欄最上方）</h3>
+            <p className="text-xs text-slate-700 leading-relaxed">
+              不用填教學情境就能用的 5 個工具：Gemini 沙盒（自由對話）、PDF 文件助理（上傳講義／論文做摘要與問答）、沉浸式翻譯（逐段雙語對照，含越南語、印尼語）、圖片文字辨識（板書、手寫筆記轉文字）、APA 7 引用格式。都可以上傳檔案、連續追問，並把回答下載成 Word。
+            </p>
           </section>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

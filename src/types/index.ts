@@ -2,7 +2,7 @@ export type Role = 'student' | 'professor';
 
 export type SkillCategoryId = 'cat1' | 'cat2' | 'cat3' | 'cat4' | 'cat5';
 
-export type CategoryId = 'top5' | SkillCategoryId | 'favorites' | 'all';
+export type CategoryId = 'tools' | 'top5' | SkillCategoryId | 'favorites' | 'all';
 
 export interface Category {
   id: CategoryId;

@@ -63,8 +63,8 @@ export async function copyRich(html: string, plain: string): Promise<boolean> {
   return copyText(plain);
 }
 
-export function downloadFile(filename: string, content: string, mime: string) {
-  const blob = new Blob([content], { type: mime });
+/** 下載檔案（瀏覽器內建下載）。 */
+export function downloadFile(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -73,25 +73,6 @@ export function downloadFile(filename: string, content: string, mime: string) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-/** 將排版後的 HTML 包成 Word 可直接開啟的 .doc 檔內容 */
-export function toWordDocument(title: string, bodyHtml: string): string {
-  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
-<style>
-body{font-family:"Microsoft JhengHei","Noto Sans TC",sans-serif;font-size:12pt;line-height:1.6}
-h1{font-size:18pt}h2{font-size:15pt}h3{font-size:13pt}
-table{border-collapse:collapse;width:100%}th,td{border:1px solid #888;padding:4pt 6pt;vertical-align:top}th{background:#e8eef7}
-blockquote{border-left:3pt solid #9bb;margin-left:0;padding-left:8pt;color:#444}
-code{font-family:Consolas,monospace;background:#f2f2f2}
-</style></head><body>${bodyHtml}</body></html>`;
-}
-
-const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-
-export function escapeHtml(s: string) {
-  return s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c]);
 }
 
 export function safeFilename(s: string) {

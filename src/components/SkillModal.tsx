@@ -3,7 +3,8 @@ import { Skill, Role, TeachingContext, AiStatus } from '../types';
 import { scenarioPresets, pedagogyOptions, assessmentOptions, stageOptions, commonSubjects } from '../data/presets';
 import { buildPrompt, contextCompleteness } from '../lib/prompt';
 import { streamGenerate } from '../lib/api';
-import { copyRich, copyText, downloadFile, safeFilename, toWordDocument } from '../lib/utils';
+import { copyRich, copyText, downloadFile, safeFilename } from '../lib/utils';
+import { markdownToDocx } from '../lib/docx';
 import { useDialog } from '../lib/useDialog';
 import { Markdown } from './Markdown';
 import {
@@ -143,13 +144,14 @@ export const SkillModal: React.FC<SkillModalProps> = ({
   const baseName = `NCUE_AI_${skill.id}_${safeFilename(skill.title)}`;
 
   const handleDownloadWord = () => {
-    if (!outputRef.current) return;
-    downloadFile(`${baseName}.doc`, toWordDocument(skill.title, outputRef.current.innerHTML), 'application/msword');
+    if (!output) return;
+    const subtitle = `${currentRole === 'student' ? '師培生視角' : '教授／指導視角'} · ${new Date().toLocaleDateString('zh-TW')} · NCUE 未來教師 AI 力`;
+    downloadFile(`${baseName}.docx`, markdownToDocx(output, skill.title, subtitle));
   };
 
   const handleDownloadMd = (what: 'prompt' | 'output') => {
     const text = what === 'output' ? output : finalPrompt;
-    downloadFile(`${baseName}${what === 'prompt' ? '_Prompt' : ''}.md`, text, 'text/markdown;charset=utf-8');
+    downloadFile(`${baseName}${what === 'prompt' ? '_Prompt' : ''}.md`, new Blob([text], { type: 'text/markdown;charset=utf-8' }));
   };
 
   const handleGenerate = async () => {
