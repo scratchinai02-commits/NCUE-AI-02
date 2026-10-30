@@ -121,7 +121,7 @@ export const ToolGuide: React.FC<ToolGuideProps> = ({ tool, done, onToggleDone, 
                 onClick={() =>
                   downloadFile(
                     `${baseName}.docx`,
-                    markdownToDocx(guideMarkdown(), `${tool.title}（Gemini Canvas 提示詞）`, 'NCUE 未來教師 AI 力・AI 工具箱'),
+                    markdownToDocx(guideMarkdown(), `${tool.title}（Gemini Canvas 提示詞）`, 'NCUE 未來教師 AI 力・Gemini 工具箱'),
                   )
                 }
                 className="px-3.5 py-2 rounded-xl bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 text-sm font-semibold flex items-center gap-1.5"

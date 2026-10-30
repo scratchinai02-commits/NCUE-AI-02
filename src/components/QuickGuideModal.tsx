@@ -116,7 +116,7 @@ export const QuickGuideModal: React.FC<QuickGuideModalProps> = ({ isOpen, onClos
           </section>
 
           <section className="p-4 rounded-xl border border-teal-200 bg-teal-50/60">
-            <h3 className="font-bold text-teal-900 mb-1.5">AI 工具箱（側欄最上方，共 15 個）</h3>
+            <h3 className="font-bold text-teal-900 mb-1.5">Gemini 工具箱（側欄最上方，共 15 個）</h3>
             <p className="text-xs text-slate-700 leading-relaxed mb-1.5">
               每個工具都是一組提示詞：開啟 Gemini、在「工具」選 Canvas，依序貼上 3 個步驟，就能生成一個屬於自己的 AI 工具，並分享連結給學生或同事。
             </p>

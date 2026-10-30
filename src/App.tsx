@@ -125,7 +125,7 @@ export default function App() {
         return [`# ${meta.title}：${meta.subtitle}`, ...toolsInGroup(g).map((t) => toolGuideMarkdown(t, 2))];
       }),
     ].join('\n\n');
-    downloadFile('NCUE_AI_工具箱_全部提示詞.docx', markdownToDocx(md, 'AI 工具箱：Gemini Canvas 提示詞講義', 'NCUE 未來教師 AI 力・彰化師範大學'));
+    downloadFile('NCUE_Gemini工具箱_全部提示詞.docx', markdownToDocx(md, 'Gemini 工具箱：Canvas 提示詞講義', 'NCUE 未來教師 AI 力・彰化師範大學'));
   };
 
   const openSkillById = (id: string) => {
@@ -248,7 +248,7 @@ export default function App() {
                 </span>
               </div>
               <p className="text-sm text-slate-500">
-                {isSearching ? '搜尋範圍：AI 工具箱與全部技能（名稱、標籤、說明與 Prompt 內文）' : activeCategoryMeta.description}
+                {isSearching ? '搜尋範圍：Gemini 工具箱與全部技能（名稱、標籤、說明與 Prompt 內文）' : activeCategoryMeta.description}
               </p>
             </div>
 
@@ -299,8 +299,8 @@ export default function App() {
           )}
 
           {matchedTools.length > 0 && (
-            <section aria-label="符合的 AI 工具" className="mb-8">
-              <h3 className="text-sm font-bold text-teal-800 mb-3">AI 工具</h3>
+            <section aria-label="符合的 Gemini 工具" className="mb-8">
+              <h3 className="text-sm font-bold text-teal-800 mb-3">Gemini 工具箱</h3>
               <div className={grid}>
                 {matchedTools.map((t) => (
                   <ToolCard key={t.id} tool={t} onOpen={setActiveTool} progress={toolProgress[t.id]?.length || 0} />
