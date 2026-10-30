@@ -34,6 +34,15 @@ NODE_ENV=production GEMINI_API_KEY=你的金鑰 npm start
 
 可用的環境變數請見 `.env.example`（模型名稱、每個 IP 的生成次數限制、Prompt 長度上限）。
 
+**Google Cloud Run（從 GitHub 持續部署）**
+
+1. Cloud Run →「部署容器」→「服務」→ 選「從存放區持續部署」→「設定 Cloud Build」。
+2. 存放區供應商選 GitHub，依畫面授權並安裝 Google Cloud Build GitHub App，選擇本 repo。
+3. 分支填 `^main$`，建置類型選「Dockerfile」（路徑 `/Dockerfile`）。
+4. 驗證選「允許未經驗證的叫用」（公開網站）。
+5. 在「容器、變數與密鑰」新增 `GEMINI_API_KEY`（建議從 Secret Manager 參照）。
+6. 建立後，之後每次推送到 main 都會自動重新部署。
+
 **純靜態主機（Firebase Hosting、GitHub Pages…）**
 
 `npm run build` 後上傳 `dist/` 即可。網站偵測不到後端時，會自動隱藏「即時 AI 生成」，只保留「複製 Prompt」功能。
