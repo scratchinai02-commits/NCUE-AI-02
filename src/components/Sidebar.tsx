@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Wrench,
   SquareTerminal,
+  Zap,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -40,7 +41,7 @@ const ICONS: Record<CategoryId, React.ReactNode> = {
   all: <LayoutGrid className="w-4 h-4 text-slate-600" />,
 };
 
-const PORTAL_ICONS = [BookOpen, Laptop, Tv, ShieldCheck];
+const PORTAL_ICONS = [BookOpen, Laptop, Tv, ShieldCheck, Zap];
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentCategory, onSelectCategory, counts, dimmed }) => {
   return (
