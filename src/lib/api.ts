@@ -1,5 +1,4 @@
 import type { AiStatus, Role } from '../types';
-import type { ToolId } from '../data/tools';
 
 const ERROR_MARKER = '[[STREAM_ERROR]]';
 
@@ -69,29 +68,4 @@ async function streamPost(url: string, body: unknown, signal: AbortSignal, onTex
 /** 技能：串流生成 */
 export function streamGenerate(opts: { prompt: string; role: Role; signal: AbortSignal; onText: (fullText: string) => void }) {
   return streamPost('/api/generate-stream', { prompt: opts.prompt, role: opts.role }, opts.signal, opts.onText);
-}
-
-export interface ChatMessage {
-  role: 'user' | 'model';
-  text: string;
-}
-
-export interface UploadedFile {
-  name: string;
-  mimeType: string;
-  size: number;
-  /** base64（不含 data: 前綴） */
-  data: string;
-}
-
-/** AI 工具箱：串流生成（可附檔、可追問） */
-export function streamTool(opts: {
-  tool: ToolId;
-  messages: ChatMessage[];
-  file: UploadedFile | null;
-  signal: AbortSignal;
-  onText: (fullText: string) => void;
-}) {
-  const file = opts.file ? { name: opts.file.name, mimeType: opts.file.mimeType, data: opts.file.data } : undefined;
-  return streamPost('/api/tool-stream', { tool: opts.tool, messages: opts.messages, file }, opts.signal, opts.onText);
 }

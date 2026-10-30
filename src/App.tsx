@@ -7,11 +7,12 @@ import { SkillCard } from './components/SkillCard';
 import { SkillModal, SkillDraft } from './components/SkillModal';
 import { QuickGuideModal } from './components/QuickGuideModal';
 import { ToolCard } from './components/ToolCard';
-import { ToolModal, ToolDraft } from './components/ToolModal';
-import { TOOLS, TOOL_GROUPS, toolsInGroup, ToolDef, ToolGroup } from './data/tools';
+import { ToolGuide } from './components/ToolGuide';
+import { TOOLS, TOOL_GROUPS, GEMINI_URL, toolsInGroup, toolGuideMarkdown, ToolDef, ToolGroup } from './data/tools';
+import { markdownToDocx } from './lib/docx';
 import { BANNER_IMAGE_URL } from './components/HeroBanner';
 import { fetchAiStatus } from './lib/api';
-import { loadJSON, saveJSON } from './lib/utils';
+import { loadJSON, saveJSON, downloadFile } from './lib/utils';
 import { Search, X, Award, ArrowRight, Star } from 'lucide-react';
 
 const initialContext: TeachingContext = {
@@ -29,6 +30,7 @@ const STORAGE = {
   favorites: 'ncue_ai_favorites',
   context: 'ncue_ai_context',
   role: 'ncue_ai_role',
+  toolProgress: 'ncue_tool_progress',
 };
 
 const skillCategories = categories.filter((c) => !['all', 'favorites', 'top5', 'tools'].includes(c.id));
@@ -61,7 +63,7 @@ export default function App() {
   }));
   const [activeSkill, setActiveSkill] = useState<Skill | null>(null);
   const [activeTool, setActiveTool] = useState<ToolDef | null>(null);
-  const [toolDrafts, setToolDrafts] = useState<Record<string, ToolDraft>>({});
+  const [toolProgress, setToolProgress] = useState<Record<string, number[]>>(() => loadJSON(STORAGE.toolProgress, {}));
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
   const [drafts, setDrafts] = useState<Record<string, SkillDraft>>({});
@@ -70,6 +72,7 @@ export default function App() {
 
   useEffect(() => saveJSON(STORAGE.favorites, favorites), [favorites]);
   useEffect(() => saveJSON(STORAGE.role, currentRole), [currentRole]);
+  useEffect(() => saveJSON(STORAGE.toolProgress, toolProgress), [toolProgress]);
   useEffect(() => {
     const t = window.setTimeout(() => saveJSON(STORAGE.context, teachingContext), 300);
     return () => window.clearTimeout(t);
@@ -105,9 +108,25 @@ export default function App() {
     setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   }, []);
   const closeTool = useCallback(() => setActiveTool(null), []);
-  const saveToolDraft = useCallback((id: string, draft: ToolDraft) => {
-    setToolDrafts((prev) => ({ ...prev, [id]: draft }));
+  const toggleToolStep = useCallback((id: string, step: number) => {
+    setToolProgress((prev) => {
+      const cur = prev[id] || [];
+      return { ...prev, [id]: cur.includes(step) ? cur.filter((x) => x !== step) : [...cur, step] };
+    });
   }, []);
+
+  /** 下載全部工具的提示詞講義（研習用） */
+  const downloadAllTools = () => {
+    const order: ToolGroup[] = ['common', 'professor', 'student'];
+    const md = [
+      `每個工具都是一組提示詞：開啟 Gemini（${GEMINI_URL}），在輸入框下方的「工具」選 Canvas，依序貼上各步驟的提示詞，就能生成屬於自己的 AI 工具。`,
+      ...order.flatMap((g) => {
+        const meta = TOOL_GROUPS.find((x) => x.id === g)!;
+        return [`# ${meta.title}：${meta.subtitle}`, ...toolsInGroup(g).map((t) => toolGuideMarkdown(t, 2))];
+      }),
+    ].join('\n\n');
+    downloadFile('NCUE_AI_工具箱_全部提示詞.docx', markdownToDocx(md, 'AI 工具箱：Gemini Canvas 提示詞講義', 'NCUE 未來教師 AI 力・彰化師範大學'));
+  };
 
   const openSkillById = (id: string) => {
     const s = skillsData.find((x) => x.id === id);
@@ -284,7 +303,7 @@ export default function App() {
               <h3 className="text-sm font-bold text-teal-800 mb-3">AI 工具</h3>
               <div className={grid}>
                 {matchedTools.map((t) => (
-                  <ToolCard key={t.id} tool={t} onOpen={setActiveTool} hasConversation={Boolean(toolDrafts[t.id]?.messages?.length)} />
+                  <ToolCard key={t.id} tool={t} onOpen={setActiveTool} progress={toolProgress[t.id]?.length || 0} />
                 ))}
               </div>
               {visibleSkills.length > 0 && <h3 className="text-sm font-bold text-blue-900 mt-8 -mb-1">教學技能</h3>}
@@ -293,6 +312,30 @@ export default function App() {
 
           {showTools ? (
             <div className="space-y-10">
+              <div className="p-4 rounded-xl bg-gradient-to-r from-teal-800 to-teal-950 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <ol className="flex flex-col sm:flex-row gap-2 sm:gap-6 text-sm">
+                  <li><span className="font-bold text-teal-200">1</span>　開啟 Gemini，工具選 Canvas</li>
+                  <li><span className="font-bold text-teal-200">2</span>　依序貼上每一步提示詞</li>
+                  <li><span className="font-bold text-teal-200">3</span>　生成工具，分享連結</li>
+                </ol>
+                <div className="flex gap-2 shrink-0">
+                  <a
+                    href={GEMINI_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-semibold px-3 py-2 rounded-lg bg-white text-teal-900 hover:bg-teal-50 whitespace-nowrap"
+                  >
+                    開啟 Gemini
+                  </a>
+                  <button
+                    type="button"
+                    onClick={downloadAllTools}
+                    className="text-xs font-semibold px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 whitespace-nowrap"
+                  >
+                    下載全部提示詞講義（Word）
+                  </button>
+                </div>
+              </div>
               {(currentRole === 'professor' ? ['professor', 'common', 'student'] : ['student', 'common', 'professor']).map((gid) => {
                 const g = TOOL_GROUPS.find((x) => x.id === gid)!;
                 const mine = (gid === 'professor' && currentRole === 'professor') || (gid === 'student' && currentRole === 'student');
@@ -309,18 +352,14 @@ export default function App() {
                     </div>
                     <div className={grid}>
                       {toolsInGroup(g.id as ToolGroup).map((t) => (
-                        <ToolCard key={t.id} tool={t} onOpen={setActiveTool} hasConversation={Boolean(toolDrafts[t.id]?.messages?.length)} />
+                        <ToolCard key={t.id} tool={t} onOpen={setActiveTool} progress={toolProgress[t.id]?.length || 0} />
                       ))}
                     </div>
                   </section>
                 );
               })}
               <p className="text-xs text-slate-500 leading-relaxed">
-                {aiStatus === null
-                  ? '正在確認 AI 服務…'
-                  : aiStatus.available
-                    ? '工具由 Gemini 即時處理；上傳的檔案只用於這次對話，不會保存在網站上。'
-                    : '此網站目前未連接 AI 服務：工具仍可使用「複製指令」，再到 Gemini 官網貼上並上傳檔案。'}
+                提示詞的完成進度記在這台裝置的瀏覽器中。Gemini Canvas 需要 Google 帳號；用學校帳號時，若看不到 Canvas，請改用個人帳號或洽學校管理員。
               </p>
             </div>
           ) : visibleSkills.length === 0 ? (
@@ -403,12 +442,11 @@ export default function App() {
       )}
 
       {activeTool && (
-        <ToolModal
+        <ToolGuide
           key={activeTool.id}
           tool={activeTool}
-          aiStatus={aiStatus}
-          draft={toolDrafts[activeTool.id] || {}}
-          onSaveDraft={saveToolDraft}
+          done={toolProgress[activeTool.id] || []}
+          onToggleDone={toggleToolStep}
           onClose={closeTool}
         />
       )}

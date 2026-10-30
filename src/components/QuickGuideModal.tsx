@@ -117,18 +117,20 @@ export const QuickGuideModal: React.FC<QuickGuideModalProps> = ({ isOpen, onClos
 
           <section className="p-4 rounded-xl border border-teal-200 bg-teal-50/60">
             <h3 className="font-bold text-teal-900 mb-1.5">AI 工具箱（側欄最上方，共 15 個）</h3>
+            <p className="text-xs text-slate-700 leading-relaxed mb-1.5">
+              每個工具都是一組提示詞：開啟 Gemini、在「工具」選 Canvas，依序貼上 3 個步驟，就能生成一個屬於自己的 AI 工具，並分享連結給學生或同事。
+            </p>
             <ul className="text-xs text-slate-700 leading-relaxed space-y-1">
               <li>
-                <strong>共同常用</strong>：Gemini 沙盒、PDF 文件助理、沉浸式翻譯（含越南語、印尼語）、圖片文字辨識、APA 7 引用格式。
+                <strong>共同常用</strong>：Prompt 實驗室、PDF 文件助理、PDF 沉浸式翻譯、板書與手寫辨識、APA 7 引用格式。
               </li>
               <li>
-                <strong>教授場域</strong>（AI 從工具走向研究與知識創造）：研究發想、學術寫作潤飾、研究資料分析、專屬 AI 助教建置（RAG）、AI 工作流自動化（Agent）。
+                <strong>教授場域</strong>：研究發想助理、學術寫作潤飾台、研究資料分析台、課程專屬 AI 助教（RAG）、批次回饋工作流（Agent）。
               </li>
               <li>
-                <strong>師培生場域</strong>（AI 從工具走向未來教師的教學能力）：AI 備課速成、教學圖像與影音、課堂遊戲產生器、出題與錯誤診斷、班級經營模擬器。
+                <strong>師培生場域</strong>：AI 備課速成、教學圖像工作室、課堂遊戲產生器、出題與錯誤診斷、班級經營模擬器。
               </li>
             </ul>
-            <p className="text-xs text-slate-600 mt-1.5">不用填教學情境就能用；都可以上傳檔案、連續追問，並把回答下載成 Word。</p>
           </section>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

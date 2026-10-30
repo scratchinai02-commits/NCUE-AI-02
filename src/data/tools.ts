@@ -1,6 +1,7 @@
 /**
- * AI 工具箱：共同常用 5 個＋教授場域 5 個＋師培生場域 5 個。
- * 這個檔案前端（介面、複製指令）與後端（server.ts 系統指令、檔案檢查）共用，請勿引入瀏覽器專用的套件。
+ * AI 工具箱：每個工具都是一組「在 Gemini Canvas 依序貼上」的提示詞，
+ * 貼完就會生成一個屬於自己的 AI 工具（單一 HTML 網頁 App）。
+ * 共同常用 5 個＋教授場域 5 個＋師培生場域 5 個。
  */
 
 export type ToolId =
@@ -31,166 +32,291 @@ export const TOOL_GROUPS: { id: ToolGroup; title: string; subtitle: string }[] =
   { id: 'student', title: '師培生場域', subtitle: 'AI 從工具走向未來教師的教學能力' },
 ];
 
-export interface ToolOption {
-  id: string;
-  label: string;
-  choices: string[];
-}
-
-export interface ToolFileSpec {
-  /** <input accept> */
-  accept: string;
-  /** 後端允許的 MIME 類型 */
-  mimes: string[];
-  maxMB: number;
-  label: string;
-  hint: string;
-  required: boolean;
+export interface ToolStep {
+  title: string;
+  prompt: string;
+  /** 貼上後應該看到的結果，讓使用者確認可以進下一步 */
+  check: string;
 }
 
 export interface ToolDef {
   id: ToolId;
-  title: string;
-  tagline: string;
-  desc: string;
   group: ToolGroup;
   /** 對應講座主題，例如 AI Research、AI Lesson */
   theme?: string;
-  file?: ToolFileSpec;
-  text: { label: string; placeholder: string; required: boolean };
-  options?: ToolOption[];
-  /** 快速帶入的範例文字 */
-  quick?: string[];
-  /** 得到第一個回答後的追問建議 */
-  followUps: string[];
-  runLabel: string;
+  title: string;
+  tagline: string;
+  desc: string;
+  /** 生成的 App 名稱 */
+  appName: string;
+  /** 若 App 需要上傳檔案，在第 1 步加上檔案處理規格 */
+  upload?: string;
+  steps: ToolStep[];
 }
 
-const IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/webp', 'image/heic', 'image/heif'];
-const PDF_OR_IMAGE = ['application/pdf', ...IMAGE_MIMES];
+export const GEMINI_URL = 'https://gemini.google.com/app';
+export const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
+export const ALT_MODEL = 'gemini-3.8-flash';
+
+/** 每個工具第 1 步都會附上的共通技術規格 */
+export function commonSpec(upload?: string) {
+  return [
+    '【技術規格（請務必遵守）】',
+    '- 單一 HTML 檔，使用 Tailwind CSS（CDN）與原生 JavaScript，不使用 React 等框架。',
+    '- 介面全部使用臺灣繁體中文，簡潔清楚，手機與電腦都能操作。',
+    '- 呼叫 Gemini API 時使用 Canvas 內建方式：',
+    '  const apiKey = "";',
+    `  let MODEL = "${DEFAULT_MODEL}";`,
+    '  fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${apiKey}`, { method: "POST", ... })',
+    `- 畫面右上角放模型下拉選單（${DEFAULT_MODEL}／${ALT_MODEL}）；呼叫失敗（403、404）時顯示「此模型在 Canvas 無法使用，請切換模型再試」。`,
+    '- 需要結構化資料時，使用 generationConfig 的 responseMimeType: "application/json" 與 responseSchema。',
+    '- AI 回覆以 Markdown 排版顯示（可用 marked.js），標題、表格、清單要正確呈現。',
+    '- 呼叫時顯示載入動畫並停用按鈕；錯誤訊息要具體，告訴使用者下一步怎麼做。',
+    upload ? `- 檔案處理：${upload}` : '',
+    '- 不寫死任何 API 金鑰，資料只送到 Gemini，不傳到其他伺服器。',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+const KEEP = '\n\n請保留所有既有功能，只修改需要的部分，並確認整個 App 仍可正常執行。';
+
+/** 取得某一步要貼上的完整提示詞 */
+export function stepPrompt(tool: ToolDef, index: number): string {
+  const step = tool.steps[index];
+  if (!step) return '';
+  return index === 0 ? `${step.prompt}\n\n${commonSpec(tool.upload)}` : `${step.prompt}${KEEP}`;
+}
+
+const PDF_UPLOAD =
+  '支援點擊選檔與拖曳上傳；PDF 以 base64 放進 inline_data（mime_type: application/pdf）送給 Gemini；上限 20 MB，不是 PDF 或超過上限要提示。';
+const IMAGE_UPLOAD =
+  '支援點擊選檔、拖曳與手機拍照（<input type="file" accept="image/*,application/pdf" capture="environment">）；圖片或 PDF 以 base64 放進 inline_data（mime_type 依檔案類型）送給 Gemini；上限 20 MB。';
 
 export const TOOLS: ToolDef[] = [
+  // ---------------------------------------------------------------------------
+  // 共同常用
+  // ---------------------------------------------------------------------------
   {
     id: 'sandbox',
-    title: 'Gemini 沙盒',
-    tagline: '自由對話、測試你寫的 Prompt',
-    desc: '像在 Gemini 官網一樣自由提問，可附加 PDF 或圖片並連續追問。適合測試自己寫的 Prompt、腦力激盪，或請 AI 修改文字。',
     group: 'common',
-    file: {
-      accept: '.pdf,.png,.jpg,.jpeg,.webp,.heic,.txt',
-      mimes: ['application/pdf', 'text/plain', ...IMAGE_MIMES],
-      maxMB: 15,
-      label: '附加檔案（選填）',
-      hint: 'PDF、圖片或純文字，上限 15 MB',
-      required: false,
-    },
-    text: { label: '你的問題或 Prompt', placeholder: '輸入任何問題，或貼上你想測試的 Prompt…', required: true },
-    options: [{ id: 'style', label: '回答風格', choices: ['一般', '精簡條列', '教學示範（附例子）', '蘇格拉底式提問（只引導不給答案）'] }],
-    quick: [
-      '幫我想 5 個國中數學課的破冰提問，每個附上預期學生反應。',
-      '把下面這段文字改寫成國小五年級看得懂的版本：\n\n',
-      '檢查下面這段文字的錯字、語病與標點，並列出修改前後對照：\n\n',
-      '請扮演嚴格的教甄口試委員，針對我的教學理念追問 3 個問題，每次只問一題：\n\n我的教學理念是：',
+    title: 'Prompt 實驗室',
+    tagline: '測試、比較、收藏你的提示詞',
+    desc: '做出一個提示詞實驗室：設定角色、輸入任務、附加檔案後執行；兩組提示詞並排比較；把好用的提示詞存成自己的提示詞庫。',
+    appName: 'Prompt 實驗室',
+    upload: '可選擇附加 PDF 或圖片，以 base64 放進 inline_data 一起送出；上限 20 MB。',
+    steps: [
+      {
+        title: '建立 Prompt 實驗室',
+        prompt: `請在 Canvas 建立一個網頁 App「Prompt 實驗室」，讓老師測試自己寫的提示詞。
+
+【功能】
+1. 左側輸入區：
+   - 「角色設定」文字框（作為 systemInstruction，例如「你是國中數學老師」）
+   - 「任務內容」文字框（使用者輸入）
+   - 「附加檔案」按鈕：可附加一個 PDF 或圖片
+   - 「溫度」滑桿（0～1，預設 0.7）
+   - 「執行」按鈕（Ctrl＋Enter 也可執行）
+2. 右側結果區：以 Markdown 排版顯示 AI 回覆，並顯示回應時間（秒）與字數；有「複製結果」按鈕。
+3. 上方放 6 個範例按鈕，點了會自動填入角色與任務：教案生成、出 5 題選擇題、改寫成國小版本、作文回饋、英翻中、蘇格拉底式提問。`,
+        check: '右側出現 App 預覽；點範例按鈕再按「執行」，會出現排版好的回覆。',
+      },
+      {
+        title: '加入 A／B 並排比較',
+        prompt: `請在目前的 Prompt 實驗室加入「A／B 比較模式」：
+1. 上方切換「單一模式／比較模式」。
+2. 比較模式時，畫面分成左右兩欄，各自有「角色設定」與「任務內容」，共用附加檔案與模型。
+3. 按「同時執行」後，兩邊同時呼叫 Gemini，結果並排顯示，各自標示回應時間與字數。
+4. 結果下方有「A 比較好／B 比較好／差不多」三個按鈕，紀錄在頁面下方的「比較紀錄」表格（時間、A 摘要、B 摘要、勝出者）。`,
+        check: '切換到比較模式後，左右兩欄會同時產生回覆，並能記錄哪一邊比較好。',
+      },
+      {
+        title: '建立我的提示詞庫',
+        prompt: `請在目前的 App 加入「我的提示詞庫」：
+1. 每次執行後可按「收藏」，輸入名稱與標籤（例如：教案、評量、回饋）存入提示詞庫（存在 localStorage）。
+2. 側邊欄列出提示詞庫，可依標籤篩選、搜尋、載入、刪除。
+3. 「匯出提示詞庫」下載成 JSON 檔；「匯入」可讀回 JSON；另提供「匯出成 Markdown」方便放進講義。
+4. 每個收藏可加上「適用情境」與「注意事項」兩個備註欄位。`,
+        check: '收藏的提示詞出現在側邊欄，重新整理頁面後仍然存在，也能匯出成檔案。',
+      },
     ],
-    followUps: ['再精簡一點', '改成表格呈現', '舉一個課堂實例'],
-    runLabel: '送出',
   },
   {
     id: 'pdf',
-    title: 'PDF 文件助理',
-    tagline: '上傳講義、論文、公文，摘要與問答',
-    desc: '上傳 PDF 後，AI 只根據文件內容做重點摘要、章節大綱、出理解測驗或回答你的問題，並盡量標註頁碼。掃描檔也能讀。',
     group: 'common',
-    file: {
-      accept: '.pdf',
-      mimes: ['application/pdf'],
-      maxMB: 15,
-      label: '上傳 PDF',
-      hint: '文字型或掃描型 PDF，上限 15 MB',
-      required: true,
-    },
-    text: { label: '想問的問題或補充要求（選填）', placeholder: '例如：這篇研究的樣本是誰？研究限制有哪些？', required: false },
-    options: [
+    title: 'PDF 文件助理',
+    tagline: '上傳講義或論文，摘要、問答、出測驗',
+    desc: '做出一個 PDF 讀書助理：上傳 PDF 後自動整理摘要與重點（附頁碼），可以針對文件提問，還能產生理解測驗讓學生作答。',
+    appName: 'PDF 文件助理',
+    upload: PDF_UPLOAD,
+    steps: [
       {
-        id: 'task',
-        label: '任務',
-        choices: ['重點摘要', '逐章節大綱', '出 10 題理解測驗（附解答）', '整理成上課用的重點講義', '只回答我的問題'],
+        title: '上傳 PDF 並整理重點',
+        prompt: `請在 Canvas 建立一個網頁 App「PDF 文件助理」，給大學師生閱讀講義、論文與公文使用。
+
+【功能】
+1. 畫面中央有大型上傳區，可點擊選檔或拖曳 PDF；顯示檔名與大小。
+2. 上傳後呼叫 Gemini 讀取 PDF，用 responseSchema 回傳 JSON：
+   { summary: 三句話摘要, points: [{text, page}], terms: [{term, definition, page}] }
+3. 結果分成三個頁籤顯示：「摘要」「重點（附頁碼 p.3）」「關鍵名詞」。
+4. 每個頁籤都有「複製」按鈕。
+5. 系統指示：只能根據 PDF 內容回答，文件沒有的資訊不可自行補充。`,
+        check: '上傳一份 PDF 後，三個頁籤分別顯示摘要、附頁碼的重點與名詞表。',
+      },
+      {
+        title: '加入文件問答',
+        prompt: `請在目前的 App 加入「問答」頁籤：
+1. 對話介面：輸入問題後，把 PDF 與先前的對話紀錄一起送給 Gemini。
+2. 回答只能根據 PDF，每個重點後標註頁碼；文件沒有提到時回答「文件未提及」。
+3. 輸入框上方提供 3 個建議問題按鈕，由 Gemini 根據文件內容產生。
+4. 對話可「清除重來」，也可「匯出對話」成 Markdown。`,
+        check: '在問答頁籤提問，回覆會標註頁碼；問文件裡沒有的事會說「文件未提及」。',
+      },
+      {
+        title: '加入理解測驗與匯出',
+        prompt: `請在目前的 App 加入「測驗」頁籤：
+1. 選擇題數（5／10／15）後按「產生測驗」，用 responseSchema 回傳 JSON：
+   [{ question, options: [4 個選項], answer: 正確選項索引, explanation, page }]
+2. 以作答介面呈現：學生點選答案後按「交卷」，顯示分數、每題對錯、解析與出處頁碼。
+3. 「重新作答」會打亂選項順序。
+4. 「下載講義」把摘要、重點、名詞表與測驗（含答案卷）整理成一份可列印的 HTML，並可存成 Word（.doc）。`,
+        check: '產生的測驗可以作答、交卷後看到分數與解析，並能下載講義。',
       },
     ],
-    followUps: ['用 3 句話講給學生聽', '列出文中的關鍵名詞與定義', '這份文件對教學現場有什麼啟示？'],
-    runLabel: '開始分析',
   },
   {
     id: 'translate',
-    title: '沉浸式翻譯',
-    tagline: '原文與譯文逐段對照',
-    desc: '貼上文字或上傳 PDF／圖片，產出逐段對照的雙語譯文。可翻成英、日、韓，也支援越南語、印尼語，方便寫給新住民家長的通知。',
     group: 'common',
-    file: {
-      accept: '.pdf,.png,.jpg,.jpeg,.webp,.heic',
-      mimes: ['application/pdf', ...IMAGE_MIMES],
-      maxMB: 15,
-      label: '上傳 PDF 或圖片（選填）',
-      hint: '也可以只在下方貼上文字；上限 15 MB',
-      required: false,
-    },
-    text: { label: '要翻譯的文字', placeholder: '貼上論文段落、英文教材、家長通知單…（已上傳檔案則可留空）', required: false },
-    options: [
-      { id: 'lang', label: '翻成', choices: ['繁體中文（臺灣）', 'English', '日本語', '한국어', 'Tiếng Việt（越南語）', 'Bahasa Indonesia（印尼語）'] },
-      { id: 'layout', label: '呈現方式', choices: ['逐段對照（原文＋譯文）', '左右對照表格', '只要譯文'] },
-      { id: 'tone', label: '語氣', choices: ['忠實學術', '一般自然', '給家長的親切口吻'] },
+    title: 'PDF 沉浸式翻譯',
+    tagline: '英文 PDF 逐段雙語對照翻譯',
+    desc: '做出一個 PDF 沉浸式翻譯器：在瀏覽器把英文 PDF 拆成段落，分批交給 Gemini 翻譯，原文與譯文逐段對照，長篇論文也不會被截斷。',
+    appName: 'PDF 沉浸式翻譯器',
+    upload:
+      '用 PDF.js 在瀏覽器擷取文字：<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>，並設定 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"；上限 20 MB。',
+    steps: [
+      {
+        title: '上傳 PDF 並逐段擷取',
+        prompt: `請在 Canvas 建立一個網頁 App「PDF 沉浸式翻譯器」，給大學師生閱讀英文論文與教材。
+
+【這一步先完成：上傳與逐段擷取】
+1. 畫面中央有大型上傳區（點擊開啟檔案對話框或拖曳 PDF），顯示檔名、頁數、大小。
+2. 用 PDF.js 擷取每頁文字，依行距與縮排合併成「段落」：
+   - 移除頁首、頁尾、頁碼（多頁同位置重複出現的短行）
+   - 合併換行斷開的句子，處理連字號斷字（learn-\\ning → learning）
+   - 字級較大或很短的獨立行視為標題，獨立成段
+3. 每段存成 {id, page, type: "heading"|"paragraph", source, translation, status}，先把原文段落依序列出並標示頁碼。
+4. 若整份 PDF 擷取不到文字（掃描檔），顯示「這是掃描檔，下一步會改用 Gemini 直接讀取」。`,
+        check: '上傳英文 PDF 後，畫面依序列出原文段落並標示頁碼。',
+      },
+      {
+        title: '分批翻譯並雙語顯示',
+        prompt: `請在目前的 App 加入翻譯功能：
+1. 每次送 8 個段落給 Gemini，用 responseSchema 回傳 [{id, translation}]。
+2. systemInstruction：「你是專業學術譯者。把每一段英文翻成臺灣繁體中文，忠實、通順、學術語氣；專有名詞第一次出現時以括號保留英文；不可省略、合併或增加內容；數學式與引用標記（如 [12]、(Smith, 2020)）照原樣保留。」
+3. 最多 3 個請求同時進行；失敗自動重試 2 次；仍失敗的段落顯示「重新翻譯」按鈕。
+4. 沉浸式顯示：每段英文原文在上（灰色、略小），中文譯文緊接在下（深色、左側細色條），已翻好的段落先顯示。
+5. 頂部顯示進度條「已翻譯 n／總段數」與「暫停／繼續」按鈕。
+6. 掃描檔：改把 PDF 以 inline_data 送給 Gemini，請它回傳段落陣列後再翻譯。`,
+        check: '段落會逐批出現中文譯文，原文在上、譯文在下，進度條會前進。',
+      },
+      {
+        title: '檢視切換、匯出與術語表',
+        prompt: `請在目前的 App 加入：
+1. 檢視切換：雙語對照／只看譯文／只看原文；字級大小可調。
+2. 每段滑過時出現「複製譯文」「重新翻譯」小按鈕。
+3. 匯出：「下載雙語 HTML」（可離線開啟）、「下載 Word（.doc）」、「複製全部譯文」。
+4. 全部翻完後再呼叫一次 Gemini，整理「英文術語｜中文譯名｜首次出現頁碼」表，顯示在右側欄，可下載 CSV。`,
+        check: '可以切換三種檢視、下載雙語檔案，右側出現術語對照表。',
+      },
     ],
-    followUps: ['列出專有名詞中英對照表', '把譯文改得更口語', '依內容出 5 題閱讀理解題'],
-    runLabel: '開始翻譯',
   },
   {
     id: 'ocr',
-    title: '圖片文字辨識',
-    tagline: '板書、手寫筆記、學習單照片轉文字',
-    desc: '拍下黑板、白板、手寫筆記或紙本學習單，轉成可以編輯的文字或表格。看不清楚的地方會標示出來，不會亂猜。',
     group: 'common',
-    file: {
-      accept: '.png,.jpg,.jpeg,.webp,.heic,.pdf',
-      mimes: [...IMAGE_MIMES, 'application/pdf'],
-      maxMB: 10,
-      label: '上傳照片或掃描檔',
-      hint: 'JPG、PNG、HEIC 或 PDF，上限 10 MB',
-      required: true,
-    },
-    text: { label: '補充說明（選填）', placeholder: '例如：這是國二理化「浮力」的板書', required: false },
-    options: [
-      { id: 'format', label: '輸出方式', choices: ['照原樣轉成文字', '整理成條列筆記', '表格內容轉成表格', '轉成可編輯的學習單'] },
-      { id: 'fix', label: '錯字處理', choices: ['保留原文不修改', '校正明顯錯字並標示'] },
+    title: '板書與手寫辨識',
+    tagline: '拍照轉成可編輯的文字、筆記或學習單',
+    desc: '做出一個拍照辨識工具：拍下黑板、手寫筆記或紙本學習單，轉成可編輯文字，再整理成條列筆記、表格或可列印的學習單。',
+    appName: '板書與手寫辨識',
+    upload: IMAGE_UPLOAD,
+    steps: [
+      {
+        title: '拍照上傳並辨識文字',
+        prompt: `請在 Canvas 建立一個網頁 App「板書與手寫辨識」。
+
+【功能】
+1. 上傳區：可拍照（手機會開相機）、選檔或拖曳圖片／PDF，上傳後顯示縮圖。
+2. 按「開始辨識」後，請 Gemini 逐字辨識圖片中的文字，保留原本的分行與編號；看不清楚的字以【?】標示，不可猜測補寫；數學式以 LaTeX 表示。
+3. 辨識結果放在可編輯的文字框中，旁邊顯示原圖方便對照（可放大）。
+4. 顯示 Gemini 回報的「辨識信心（高／中／低）」與需要人工確認的地方。`,
+        check: '拍一張板書或筆記，辨識出的文字出現在可編輯的框中，看不清楚處標示【?】。',
+      },
+      {
+        title: '整理成筆記、表格或學習單',
+        prompt: `請在目前的 App 加入「整理方式」選項，對已辨識的文字再處理：
+1. 照原樣（不改動）
+2. 條列筆記：加上標題與重點條列，不增加原文沒有的內容
+3. 表格：把圖中的表格轉成表格，其他文字放在表格前後
+4. 學習單：保留題號與題目，作答處以「＿＿＿」表示，可直接列印
+另外加入「錯字處理」開關：保留原文／校正明顯錯字並以（原：○○）標示。
+整理結果以 Markdown 排版顯示，可複製。`,
+        check: '同一份辨識結果可以切換成筆記、表格或學習單格式。',
+      },
+      {
+        title: '多張合併與匯出',
+        prompt: `請在目前的 App 加入：
+1. 一次上傳多張圖片（例如整本筆記），依上傳順序辨識，可拖曳調整順序，最後合併成一份文件。
+2. 每張圖片的辨識進度與狀態（等待中／辨識中／完成／失敗可重試）。
+3. 匯出：複製全部、下載 .txt、下載 Word（.doc）、列印（學習單版面）。
+4. 依內容一鍵產生「5 題小考」放在文件最後。`,
+        check: '多張圖片會依序辨識並合併成一份，可以下載 Word 或列印。',
+      },
     ],
-    followUps: ['整理成 3 個重點', '依內容出 5 題小考', '翻成英文'],
-    runLabel: '開始辨識',
   },
   {
     id: 'apa',
-    title: 'APA 7 引用格式',
-    tagline: '整理參考文獻與文內引用',
-    desc: '貼上雜亂的書目資料（或上傳論文首頁、書名頁），整理成 APA 第 7 版參考文獻與文內引用。缺少的資訊會標示出來，不會自己編。',
     group: 'common',
-    file: {
-      accept: '.pdf,.png,.jpg,.jpeg,.webp',
-      mimes: ['application/pdf', ...IMAGE_MIMES],
-      maxMB: 10,
-      label: '上傳論文首頁或書名頁（選填）',
-      hint: 'PDF 或圖片，上限 10 MB',
-      required: false,
-    },
-    text: {
-      label: '文獻資料（可多筆，格式亂也沒關係）',
-      placeholder: '例如：\n王小明 2021 差異化教學對國中生數學學習成效之影響 教育研究集刊 67卷2期 頁1-35\nTomlinson, C. A. The differentiated classroom 2nd ed ASCD 2014',
-      required: false,
-    },
-    options: [
-      { id: 'output', label: '輸出內容', choices: ['參考文獻列表', '參考文獻＋文內引用範例'] },
-      { id: 'order', label: '排序', choices: ['依 APA 規則排序（中文在前、英文在後）', '保持我輸入的順序'] },
+    title: 'APA 7 引用格式',
+    tagline: '雜亂書目一鍵整理成 APA 第 7 版',
+    desc: '做出一個 APA 第 7 版格式工具：貼上雜亂的書目資料，自動拆成欄位並排版；缺少的資訊會標紅提醒，不會自己編造。',
+    appName: 'APA 7 引用格式整理器',
+    upload: '可選擇上傳論文首頁或書名頁（PDF 或圖片），以 base64 放進 inline_data，請 Gemini 擷取書目資料；上限 20 MB。',
+    steps: [
+      {
+        title: '貼上書目並拆解欄位',
+        prompt: `請在 Canvas 建立一個網頁 App「APA 7 引用格式整理器」，給師培生與教授寫論文使用。
+
+【功能】
+1. 大文字框：貼上多筆雜亂的書目（中英文混合、格式不一都可以），每行一筆。
+2. 按「整理」後，請 Gemini 用 responseSchema 回傳每筆的欄位 JSON：
+   { type: 期刊/書籍/專書章節/學位論文/網頁, authors: [], year, title, source, volume, issue, pages, publisher, doi_or_url, language: zh/en, missing: [缺少的欄位] }
+   系統指示：使用者沒提供的資訊不可自行補上，放進 missing。
+3. 由 JavaScript 依 APA 第 7 版規則組成參考文獻（不要讓 AI 直接排版，以免格式不一致）：
+   - 中文：作者（年）。篇名。期刊名，卷（期），頁碼。
+   - 英文：Author, A. A., & Author, B. B. (Year). Title. Journal, volume(issue), pages. https://doi.org/...
+   - 期刊名與卷號、書名使用斜體
+4. 排序：中文在前（依作者姓氏筆畫），英文在後（依姓氏字母）。
+5. 缺少欄位的那一筆以紅色標示「缺：出版年」等提醒。`,
+        check: '貼上幾筆書目後，出現排好序、斜體正確的 APA 參考文獻列表，缺漏處標紅。',
+      },
+      {
+        title: '文內引用與欄位修正',
+        prompt: `請在目前的 App 加入：
+1. 每筆參考文獻旁顯示文內引用範例：括號式（王小明，2021）／(Smith & Lee, 2020)，與敘述式 王小明（2021）／Smith and Lee (2020)；三位以上作者使用「等人」／et al.。
+2. 點任一筆可開啟編輯表單，手動補上缺少的欄位，存檔後立即重新排版。
+3. 上傳論文首頁或書名頁（PDF 或圖片），請 Gemini 擷取書目欄位，加入列表。`,
+        check: '每筆都有文內引用範例；手動補上缺漏欄位後，紅色提醒消失。',
+      },
+      {
+        title: '匯出與檢查清單',
+        prompt: `請在目前的 App 加入：
+1. 匯出：複製全部（保留斜體的格式化文字）、下載 Word（.doc，懸掛縮排 0.5 吋、行距 2 倍）、下載 BibTeX、下載 CSV。
+2. 「檢查清單」表格：每筆的完整度、缺少欄位、可能需要查證的地方（例如年份與 DOI 對不上）。
+3. 清單資料存在 localStorage，重新整理不會消失；可「清空」。`,
+        check: '可以下載 Word 與 BibTeX，檢查清單列出每筆的完整度。',
+      },
     ],
-    followUps: ['哪幾筆資訊不完整？', '轉成 BibTeX 格式', '依出版年由新到舊排序'],
-    runLabel: '整理格式',
   },
+
   // ---------------------------------------------------------------------------
   // 教授場域
   // ---------------------------------------------------------------------------
@@ -200,113 +326,204 @@ export const TOOLS: ToolDef[] = [
     theme: 'AI Research・跨域研究',
     title: '研究發想助理',
     tagline: '找研究缺口、研究問題與跨域方向',
-    desc: '輸入你關心的教學現象或研究興趣，整理出研究缺口、研究問題、研究設計與跨域切入點，並給出中英文檢索關鍵詞。不會捏造文獻。',
-    text: {
-      label: '你的研究興趣或想解決的教學現象',
-      placeholder: '例如：我想了解生成式 AI 的即時回饋，是否能改善國中生的寫作修改行為。',
-      required: true,
-    },
-    options: [
-      { id: 'approach', label: '研究取向', choices: ['還沒決定', '量化', '質性', '混合方法', '行動研究', '設計本位研究'] },
-      { id: 'cross', label: '跨域結合', choices: ['不需要', '學習科學／認知心理', '資訊科技／AI', '社會學／教育政策', '神經科學', '設計／藝術'] },
+    desc: '做出一個研究發想工具：輸入關心的教學現象，產出研究缺口、研究問題、研究設計與跨域切入點，並一鍵展開成研究計畫大綱與檢索策略。',
+    appName: '研究發想助理',
+    steps: [
+      {
+        title: '建立研究發想助理',
+        prompt: `請在 Canvas 建立一個網頁 App「研究發想助理」，給大學教授與研究生使用。
+
+【功能】
+1. 輸入區：研究興趣或教學現象（文字框）、研究取向（還沒決定／量化／質性／混合方法／行動研究／設計本位研究）、跨域結合（不需要／學習科學／資訊科技與 AI／社會學與教育政策／神經科學／設計與藝術）。
+2. 按「開始發想」後，用 responseSchema 回傳 JSON：
+   { background: [3 點重要性], gaps: [{gap, why}], questions: [{main, subs: [2 個]}], design: {participants, method, instruments, analysis}, cross: [{field, angle}], risks: [{item, mitigation}] }
+3. 以卡片呈現：研究背景、研究缺口、研究問題、研究設計表、跨域切入點、可行性與風險。
+4. systemInstruction：「你是資深教育研究方法顧問。可以建議研究方向，但絕不可列出具體的作者、年份、篇名或期刊；需要文獻支持之處標示（待補文獻）。」`,
+        check: '輸入一個研究興趣後，出現研究缺口、研究問題、研究設計等卡片。',
+      },
+      {
+        title: '展開成研究計畫大綱',
+        prompt: `請在目前的 App 加入：
+1. 每個研究問題卡片上有「展開成計畫」按鈕，產生研究計畫大綱：題目（中英）、研究背景與動機、研究目的、研究問題、文獻探討架構（只列面向，不列具體文獻）、研究方法、預期貢獻、時程表（甘特圖式表格）。
+2. 大綱以 Markdown 排版，可直接編輯，有「複製」「下載 Word（.doc）」按鈕。
+3. 已展開的計畫存成清單（localStorage），可切換比較。`,
+        check: '點「展開成計畫」會產生完整的計畫大綱，可編輯與下載。',
+      },
+      {
+        title: '檢索策略與關鍵詞矩陣',
+        prompt: `請在目前的 App 加入「檢索策略」頁籤：
+1. 根據目前選定的研究問題，產生中英文關鍵詞矩陣（概念｜中文關鍵詞｜英文關鍵詞｜同義詞）。
+2. 產生可直接貼上資料庫的布林檢索字串：ERIC、Google Scholar、華藝線上圖書館、臺灣博碩士論文知識加值系統各一組。
+3. 每組字串有「複製」與「開啟資料庫」按鈕（連到各資料庫首頁）。
+4. 提醒文字：「AI 不會提供具體文獻，請用以上檢索字串自行查找並核對。」`,
+        check: '出現關鍵詞矩陣與四組可複製的檢索字串。',
+      },
     ],
-    followUps: ['把第 1 個研究問題寫成研究計畫大綱', '列出可用的研究工具與量表類型', '這個題目適合投哪類期刊？'],
-    runLabel: '開始發想',
   },
   {
     id: 'writing',
     group: 'professor',
     theme: '學術寫作輔助',
-    title: '學術寫作潤飾',
-    tagline: '論文段落潤飾、中英摘要、審查意見回覆',
-    desc: '貼上論文段落或審查意見，依你選的程度潤飾、改寫或撰寫摘要，並附「原句／修改／理由」對照表。不改變原意、不加引用。',
-    file: {
-      accept: '.pdf,.txt',
-      mimes: ['application/pdf', 'text/plain'],
-      maxMB: 10,
-      label: '上傳文稿（選填）',
-      hint: 'PDF 或純文字，上限 10 MB',
-      required: false,
-    },
-    text: { label: '要處理的段落或審查意見', placeholder: '貼上論文段落；回覆審查意見時，請把意見與你的原文一起貼上。', required: false },
-    options: [
-      { id: 'task', label: '任務', choices: ['學術潤飾（中文）', 'English academic polishing', '撰寫中英文摘要', '回覆審查意見', '精簡字數（保留論點）'] },
-      { id: 'level', label: '修改程度', choices: ['輕度：只修語病', '中度：調整句構', '深度：重寫段落'] },
+    title: '學術寫作潤飾台',
+    tagline: '潤飾、修改對照、摘要與審查回覆',
+    desc: '做出一個學術寫作工作台：貼上論文段落，依程度潤飾並用顏色標出每一處修改，可逐條接受或拒絕；還能寫中英摘要、回覆審查意見。',
+    appName: '學術寫作潤飾台',
+    steps: [
+      {
+        title: '建立潤飾與修改對照',
+        prompt: `請在 Canvas 建立一個網頁 App「學術寫作潤飾台」，給教授與研究生修改論文。
+
+【功能】
+1. 輸入：論文段落（大文字框）、語言（中文／英文）、修改程度（輕度：只修語病／中度：調整句構／深度：重寫段落）。
+2. 按「潤飾」後，用 responseSchema 回傳 JSON：
+   { revised: 修改後全文, changes: [{original, revised, reason}] }
+3. 顯示：修改後全文（可複製），下方表格列出「原句｜修改後｜修改理由」。
+4. systemInstruction：「你是學術編輯。不可改變作者原意，不可新增任何未提供的引用、數據或結論。」
+5. 顯示修改前後的字數。`,
+        check: '貼上一段文字後，出現修改後全文與「原句／修改後／理由」對照表。',
+      },
+      {
+        title: '逐條接受或拒絕修改',
+        prompt: `請在目前的 App 加入「追蹤修訂」檢視：
+1. 用 JavaScript 比對原文與修改後全文（中文逐字、英文逐詞），刪除的部分紅色刪除線、新增的部分綠色底色，像 Word 的追蹤修訂。
+2. 每一處修改旁有「接受／拒絕」按鈕，也有「全部接受」「全部拒絕」。
+3. 依接受結果即時組出最終版本，可複製或下載 Word（.doc）。`,
+        check: '修改處以紅綠標示，可以逐條接受或拒絕，最終版本即時更新。',
+      },
+      {
+        title: '摘要與審查意見回覆',
+        prompt: `請在目前的 App 加入兩個頁籤：
+1. 「摘要」：貼上全文或段落，產生中文摘要（300–500 字）與英文 Abstract（150–250 words），各附 3–5 個關鍵詞，顯示字數是否符合。
+2. 「審查回覆」：左邊貼審查意見、右邊貼原文，產生逐條回覆表「審查意見｜回應說明｜修改處」，語氣誠懇專業；需要作者補資料的地方標示【待補】。可下載 Word（.doc）。`,
+        check: '可以產生中英摘要，以及逐條的審查意見回覆表。',
+      },
     ],
-    followUps: ['再精簡 20%', '改成更正式的學術語氣', '列出審查委員可能質疑的地方'],
-    runLabel: '開始潤飾',
   },
   {
     id: 'data',
     group: 'professor',
     theme: '研究資料分析',
-    title: '研究資料分析',
-    tagline: '數據解讀、統計方法建議、結果段落撰寫',
-    desc: '貼上或上傳 CSV 資料、問卷結果或訪談逐字稿，解讀趨勢、建議統計方法、撰寫 APA 格式結果段落，或做質性主題編碼。',
-    file: {
-      accept: '.csv,.txt,.pdf',
-      mimes: ['text/csv', 'text/plain', 'application/pdf'],
-      maxMB: 10,
-      label: '上傳資料（選填）',
-      hint: 'CSV、純文字或 PDF',
-      required: false,
-    },
-    text: {
-      label: '資料或研究設計說明',
-      placeholder: '可直接從 Excel 複製貼上（請以代號取代學生姓名）\n例：組別　前測　後測\n實驗組　62　78…',
-      required: false,
-    },
-    options: [
-      { id: 'goal', label: '分析目的', choices: ['描述統計與趨勢解讀', '建議適合的統計方法', '撰寫結果段落（APA 格式）', '質性資料主題分析（編碼）'] },
+    title: '研究資料分析台',
+    tagline: '統計由程式計算，AI 只負責解讀',
+    desc: '做出一個資料分析工具：上傳 CSV，數值統計由 JavaScript 精確計算並畫圖，Gemini 只負責解讀與撰寫 APA 結果段落；另有質性資料主題編碼。',
+    appName: '研究資料分析台',
+    steps: [
+      {
+        title: '上傳 CSV、描述統計與圖表',
+        prompt: `請在 Canvas 建立一個網頁 App「研究資料分析台」，給教授與研究生分析教學研究資料。
+
+【功能】
+1. 上傳 CSV（或直接貼上從 Excel 複製的資料），用 Papa Parse（cdnjs）解析，顯示資料表預覽（前 20 列）。
+2. 自動判斷每個欄位是數值或類別。
+3. 由 JavaScript 計算描述統計（不要交給 AI 計算）：人數、平均數、標準差、最小值、最大值、中位數；類別欄位顯示次數與百分比。
+4. 用 Chart.js（cdnjs）畫圖：數值欄位直方圖、依組別比較的長條圖（可選擇分組欄位）。
+5. 提醒文字：「請以代號取代學生姓名後再上傳。」
+
+（這一步不需要呼叫 Gemini，但仍請保留下方技術規格中的模型選單，下一步會用到。）`,
+        check: '上傳 CSV 後出現資料預覽、描述統計表與圖表。',
+      },
+      {
+        title: '統計檢定與 AI 解讀',
+        prompt: `請在目前的 App 加入「推論統計」：
+1. 選擇分析：獨立樣本 t 檢定、成對樣本 t 檢定（前後測）、單因子變異數分析、皮爾森相關。
+2. 由 JavaScript 計算（可用 cdnjs 上的 jStat）：t 值、自由度、p 值、效果量（Cohen's d 或 η²）、相關係數，結果以表格呈現。
+3. 按「AI 解讀」時，只把統計結果（不是原始資料）送給 Gemini，請它：
+   - 用白話說明結果與教學上的意涵
+   - 撰寫符合 APA 第 7 版的結果段落（必須使用程式算出的數值，不可自行改動）
+   - 提醒前提假設（常態、變異數同質）與研究限制`,
+        check: '選一種檢定後出現統計表，按「AI 解讀」會產生白話說明與 APA 結果段落。',
+      },
+      {
+        title: '質性資料主題編碼',
+        prompt: `請在目前的 App 加入「質性分析」頁籤：
+1. 貼上訪談逐字稿或開放式問卷回答（每位受訪者以代號開頭，例如 S01：）。
+2. 請 Gemini 進行主題分析，用 responseSchema 回傳：[{theme, definition, codes: [], quotes: [{speaker, text}], count}]
+3. 以表格呈現「主題｜定義｜代碼｜代表性引文｜出現次數」，並用長條圖顯示各主題出現次數。
+4. 可以手動修改主題名稱、合併主題，結果可下載 Word（.doc）與 CSV。`,
+        check: '貼上逐字稿後，出現主題、代碼與引文表格及主題次數圖。',
+      },
     ],
-    followUps: ['用表格整理描述統計', '這個結果在教學上的意涵是什麼？', '提供 R 或 Python 分析程式碼'],
-    runLabel: '開始分析',
   },
   {
     id: 'tutor',
     group: 'professor',
     theme: 'RAG・專屬知識庫',
-    title: '專屬 AI 助教建置',
-    tagline: '把課程資料變成 Gem／GPT／NotebookLM 助教',
-    desc: '上傳課程大綱或講義，產出可直接貼上的助教系統指令、知識庫資料整理方式、學術誠信護欄與測試題，幫你建立課程專屬的 AI 助教。',
-    file: {
-      accept: '.pdf,.txt',
-      mimes: ['application/pdf', 'text/plain'],
-      maxMB: 15,
-      label: '上傳課程大綱或講義（選填）',
-      hint: 'PDF 或純文字，上限 15 MB',
-      required: false,
-    },
-    text: {
-      label: '課程名稱與助教要做的事',
-      placeholder: '例如：教育心理學（大二必修）。希望助教能解釋課程概念、出練習題，但不能直接替學生寫作業。',
-      required: true,
-    },
-    options: [
-      { id: 'platform', label: '建置平台', choices: ['Gemini Gem', 'ChatGPT 自訂 GPT', 'NotebookLM', '通用（不限平台）'] },
-      { id: 'style', label: '助教風格', choices: ['蘇格拉底式引導', '直接解說＋例子', '出題練習教練'] },
+    title: '課程專屬 AI 助教',
+    tagline: '上傳課程資料，做一個學生能用的助教',
+    desc: '做出一個課程專屬 AI 助教：上傳課程大綱與講義，助教只根據這些資料回答並標註出處，用引導代替代寫；分享連結就能給全班使用。',
+    appName: '課程 AI 助教',
+    upload: '老師可上傳多份 PDF（課程大綱、講義），每份以 base64 放進 inline_data 一起送出；單檔上限 20 MB。',
+    steps: [
+      {
+        title: '建立只根據講義回答的助教',
+        prompt: `請在 Canvas 建立一個網頁 App「課程 AI 助教」，給大學老師建立課程專屬的學生助教。
+
+【功能】
+1. 「老師設定」區：課程名稱、助教名字、歡迎訊息，並可上傳多份 PDF 講義（顯示檔案清單，可移除）。
+2. 「學生對話」區：聊天介面，每次提問都把講義 PDF 與對話紀錄一起送給 Gemini。
+3. systemInstruction：「你是《課程名稱》的助教。只能根據上傳的講義回答，並在回答後標註出處（檔名與頁碼）；講義沒有的內容要說『課程資料沒有提到，建議詢問老師』。」
+4. 對話上方顯示歡迎訊息，輸入框上方有 3 個由講義內容產生的建議問題。`,
+        check: '上傳講義後提問，助教只根據講義回答並標註檔名與頁碼。',
+      },
+      {
+        title: '加入教學模式與護欄',
+        prompt: `請在目前的 App 加入：
+1. 回答風格切換：蘇格拉底式引導（先反問、給提示，不直接給答案）／直接解說＋例子／出題練習教練。
+2. 快速按鈕：「解釋這個概念」「出 3 題練習」「檢查我的理解」（學生先寫自己的理解，助教回饋）。
+3. 學術誠信護欄：偵測到「幫我寫報告」「直接給作業答案」等要求時，改為提供寫作方向與自我檢核問題，不代寫。
+4. 對話中提到學生個資時，提醒不要輸入姓名與學號。`,
+        check: '切換成蘇格拉底模式後，助教會先反問；要求代寫作業時會婉拒並給方向。',
+      },
+      {
+        title: '老師後台與分享給學生',
+        prompt: `請在目前的 App 加入：
+1. 「老師模式／學生模式」切換：學生模式隱藏設定區，只顯示對話。
+2. 老師可設定「常見問題」清單（問題＋老師的標準答案），學生問到相近問題時優先使用老師的答案。
+3. 「問題統計」：記錄學生問過的問題（存在 localStorage），老師可看到最常被問的主題，並一鍵請 Gemini 整理成「下次上課要補充的 3 個重點」。
+4. 頁面最下方顯示使用說明：「老師完成設定後，按 Canvas 右上角『分享』產生連結給學生。」`,
+        check: '學生模式只剩對話介面；老師模式可設定常見問題並看到問題統計。',
+      },
     ],
-    followUps: ['把系統指令改成英文版', '加入防止代寫作業的規則', '寫一頁給學生的使用說明'],
-    runLabel: '產生助教設定',
   },
   {
     id: 'workflow',
     group: 'professor',
     theme: 'AI Agent・教學研究自動化',
-    title: 'AI 工作流自動化',
-    tagline: '把重複的研究與行政工作交給 AI',
-    desc: '描述一件你常重複做的事，拆解成 AI 工作流程：哪些步驟交給 AI、哪些保留人工判斷，附每一步的 Prompt；需要時直接給 Google Apps Script 程式碼。',
-    text: {
-      label: '描述一個你常重複做的工作',
-      placeholder: '例如：每週收 60 位學生的反思作業（Google 表單），整理重點、給個別回饋並登記成績。',
-      required: true,
-    },
-    options: [
-      { id: 'stack', label: '偏好工具', choices: ['Google Workspace（Apps Script）', 'Microsoft 365（Power Automate）', '只用 Gemini／ChatGPT 對話', '不確定，請建議'] },
-      { id: 'skill', label: '程式能力', choices: ['完全不會寫程式', '會一點', '可以自己寫程式'] },
+    title: '批次回饋工作流',
+    tagline: '一次處理全班作業、問卷與反思',
+    desc: '做出一個 AI 工作流：匯入全班作業或問卷（CSV），依你設定的評分規準逐筆產生回饋與分數，進度可追蹤、可人工修改，最後匯出回填成績。',
+    appName: '批次回饋工作流',
+    steps: [
+      {
+        title: '匯入資料並設定規準',
+        prompt: `請在 Canvas 建立一個網頁 App「批次回饋工作流」，讓老師一次處理全班作業。
+
+【功能】
+1. 匯入：上傳 CSV（例如 Google 表單匯出的回覆）或直接貼上，用 Papa Parse（cdnjs）解析；選擇「學生代號欄位」與「作答內容欄位」。
+2. 規準設定：任務說明、評分規準表（向度｜說明｜配分，可新增刪除列）、回饋語氣（鼓勵／中立／嚴謹）、回饋字數（50／100／200 字）。
+3. 先對「第 1 筆」試跑：用 responseSchema 回傳 { scores: [{dimension, score, reason}], total, feedback, suggestion }，顯示結果讓老師確認規準是否合適。
+4. 提醒：「請以代號取代學生姓名。」`,
+        check: '匯入 CSV 並設定規準後，第 1 筆試跑會出現各向度分數與回饋。',
+      },
+      {
+        title: '批次執行與人工審核',
+        prompt: `請在目前的 App 加入批次執行：
+1. 「全部執行」：依序處理每一筆，最多 3 筆同時進行，失敗自動重試 2 次；顯示進度條與「暫停／繼續」。
+2. 結果表格：代號｜總分｜各向度分數｜回饋｜狀態（待審／已確認）；每列可展開編輯分數與回饋，改完標為「已確認」。
+3. 篩選：只看待審、只看低分（低於自訂門檻）。
+4. 統計區：全班平均、各向度平均、分數分布長條圖（Chart.js），以及 Gemini 整理的「全班共同問題 3 點」。`,
+        check: '全部執行後，表格逐列出現分數與回饋，可以編輯並看到全班統計。',
+      },
+      {
+        title: '匯出與自動化腳本',
+        prompt: `請在目前的 App 加入匯出與自動化：
+1. 匯出 CSV（代號、總分、各向度分數、回饋），可回填到 Google 試算表。
+2. 匯出「給學生的個別回饋」：每位學生一段文字，可一次複製或下載成 Word（.doc）。
+3. 「產生 Apps Script」按鈕：依目前欄位產生一段 Google Apps Script 程式碼（附中文註解與安裝步驟），貼到 Google 試算表後可把回饋寄給每位學生的學校信箱。
+4. 規準設定可存成範本（localStorage），下次直接套用。`,
+        check: '可以匯出 CSV 與個別回饋，並產生一段附說明的 Apps Script 程式碼。',
+      },
     ],
-    followUps: ['程式碼加上詳細中文註解', '加入錯誤處理與 Email 通知', '改成每週自動執行'],
-    runLabel: '設計工作流',
   },
 
   // ---------------------------------------------------------------------------
@@ -317,398 +534,221 @@ export const TOOLS: ToolDef[] = [
     group: 'student',
     theme: 'AI Lesson',
     title: 'AI 備課速成',
-    tagline: '上傳課本頁面，一次產出教案、簡報大綱、學習單',
-    desc: '拍下課本或教師手冊頁面（或只輸入單元名稱），一次產出 45 分鐘教案、簡報大綱與學習單，適合實習與試教前快速備課。',
-    file: {
-      accept: '.pdf,.png,.jpg,.jpeg,.webp,.heic',
-      mimes: PDF_OR_IMAGE,
-      maxMB: 10,
-      label: '上傳課本頁面（選填）',
-      hint: '照片或 PDF，上限 10 MB',
-      required: false,
-    },
-    text: { label: '單元名稱或教學重點', placeholder: '例如：國一數學「一元一次方程式」第 1 節：認識等量公理', required: true },
-    options: [
-      { id: 'grade', label: '年級', choices: ['國小低年級', '國小中年級', '國小高年級', '國中', '高中'] },
-      { id: 'periods', label: '節數', choices: ['1 節', '2 節', '3 節'] },
-      { id: 'output', label: '產出', choices: ['教案＋簡報大綱＋學習單', '只要教案', '只要學習單'] },
+    tagline: '教案、簡報大綱、學習單一次完成',
+    desc: '做出一個備課工具：輸入單元或拍下課本頁面，產生 45 分鐘教案，再一鍵延伸成簡報大綱與差異化學習單，可存檔與列印。',
+    appName: 'AI 備課速成',
+    upload: '可選擇上傳課本或教師手冊頁面（照片或 PDF），以 base64 放進 inline_data，教學內容以頁面為準；上限 20 MB。',
+    steps: [
+      {
+        title: '產生 45 分鐘教案',
+        prompt: `請在 Canvas 建立一個網頁 App「AI 備課速成」，給師培生準備實習與試教。
+
+【功能】
+1. 輸入：年級（國小低／中／高年級、國中、高中）、科目、單元名稱、節數（1～3 節）、教學法（可複選：講述、合作學習、PBL、遊戲化、差異化）、可選擇上傳課本頁面照片。
+2. 按「產生教案」後，用 responseSchema 回傳 JSON：
+   { objectives: [{type: 認知/技能/情意, text}], prior: 先備知識, competencies: [核心素養], flow: [{stage: 引起動機/發展活動/綜合活動, minutes, teacher, students, assessment}], materials: [], misconceptions: [3 個常見迷思] }
+3. 以教案格式排版：學習目標、先備知識、教學流程表（時間｜教師活動｜學生活動｜評量）、教學資源、常見迷思與提醒。
+4. 時間加總必須等於節數 × 45 分鐘，不符時顯示提醒。`,
+        check: '輸入單元後出現格式完整的教案，教學流程的時間加總正確。',
+      },
+      {
+        title: '延伸簡報大綱與學習單',
+        prompt: `請在目前的 App 加入兩個按鈕，依目前的教案延伸：
+1. 「產生簡報大綱」：10～12 頁，每頁有標題、重點文字、建議圖像、教師提問，以卡片呈現，可複製成文字貼到 Canva 或 PowerPoint。
+2. 「產生學習單」：情境引導、由淺入深 3 層問題、動手任務、自我檢核，作答處以「＿＿＿」表示。
+3. 學習單可選「差異化三版本」：基礎版（多提示）、標準版、挑戰版，三版並排預覽。`,
+        check: '一鍵產生簡報大綱卡片與學習單，學習單可切換三個難度版本。',
+      },
+      {
+        title: '修改、存檔與列印',
+        prompt: `請在目前的 App 加入：
+1. 教案、簡報大綱、學習單都可直接在畫面上編輯。
+2. 「再改一下」輸入框：輸入修改要求（例如「發展活動加一個小組討論」），只修改對應部分。
+3. 存檔：每份備課存成清單（localStorage），可重新開啟、複製一份、刪除。
+4. 匯出：列印（A4 版面，學習單另起一頁）、下載 Word（.doc）。`,
+        check: '可以用文字要求修改教案，存檔後重新整理仍在，並能列印或下載 Word。',
+      },
     ],
-    followUps: ['把學習單改成差異化三個版本', '加入一個小組合作活動', '產生 5 題課堂即時檢核題'],
-    runLabel: '開始備課',
   },
   {
     id: 'visual',
     group: 'student',
     theme: 'AI Visual',
-    title: '教學圖像與影音',
-    tagline: 'AI 生圖提示詞、資訊圖表、短影片分鏡',
-    desc: '輸入要教的概念，產出可直接貼到 Gemini、ChatGPT、Canva 的生圖提示詞、資訊圖表版面、簡報配色，或 30 秒教學短影片分鏡，並附科學正確性檢查。',
-    text: { label: '要呈現的概念', placeholder: '例如：光合作用的原料與產物', required: true },
-    options: [
-      { id: 'output', label: '產出', choices: ['教學插圖（AI 生圖提示詞）', '資訊圖表版面', '簡報封面與配色', '30 秒教學短影片分鏡'] },
-      { id: 'style', label: '風格', choices: ['扁平插畫', '手繪筆記', '寫實照片', '卡通角色'] },
-      { id: 'audience', label: '對象', choices: ['國小', '國中', '高中', '大學'] },
+    title: '教學圖像工作室',
+    tagline: '生圖提示詞、資訊圖表、短影片分鏡',
+    desc: '做出一個教學視覺工具：產生可貼到各家 AI 生圖的提示詞、直接在網頁上排出可下載的資訊圖表，以及 30 秒教學短影片分鏡與字幕檔。',
+    appName: '教學圖像工作室',
+    steps: [
+      {
+        title: '生圖提示詞產生器',
+        prompt: `請在 Canvas 建立一個網頁 App「教學圖像工作室」，給師培生製作教學視覺素材。
+
+【這一步先完成：生圖提示詞】
+1. 輸入：要呈現的概念（例如「光合作用的原料與產物」）、對象（國小／國中／高中／大學）、風格（扁平插畫／手繪筆記／寫實照片／卡通角色）、比例（16:9／1:1／4:5）。
+2. 按「產生」後，用 responseSchema 回傳 3 組提示詞：[{tool: Gemini/ChatGPT/Canva, zh, en, composition, avoid}]
+3. 以卡片呈現，每組有「複製中文」「複製英文」按鈕。
+4. 另外產生「科學正確性檢查清單」：這張圖容易畫錯或誤導的地方。
+5. systemInstruction：「提示詞不得包含真實人物、品牌或受著作權保護的角色。」`,
+        check: '輸入概念後出現 3 組可複製的生圖提示詞與科學正確性檢查清單。',
+      },
+      {
+        title: '在網頁上排出資訊圖表',
+        prompt: `請在目前的 App 加入「資訊圖表」頁籤：
+1. 依同一個概念，請 Gemini 用 responseSchema 回傳：{ title, subtitle, sections: [{heading, text, emoji}], palette: [3 個色碼], footer }
+2. 由 HTML／CSS 直接排出資訊圖表（不是生圖），提供 3 種版型：直式流程、四格重點、左右對照。
+3. 文字可直接在圖表上點擊修改，配色可換。
+4. 用 html2canvas（cdnjs）下載成 PNG，可放進簡報或學習單。`,
+        check: '出現排好版的資訊圖表，可以切換版型、修改文字並下載 PNG。',
+      },
+      {
+        title: '30 秒短影片分鏡與字幕',
+        prompt: `請在目前的 App 加入「短影片分鏡」頁籤：
+1. 產生 30 秒教學短影片分鏡表：秒數｜畫面｜旁白｜字幕｜音效，總長剛好 30 秒。
+2. 旁白可調整語速（每秒約 4 個字），超過時提醒。
+3. 下載字幕檔（.srt，依秒數自動產生時間碼）與分鏡表（CSV）。
+4. 每個畫面附一組生圖提示詞，可複製。`,
+        check: '產生 30 秒分鏡表，可以下載 .srt 字幕檔。',
+      },
     ],
-    followUps: ['換成另一種風格', '給我英文版生圖提示詞', '檢查內容有沒有科學錯誤'],
-    runLabel: '開始設計',
   },
   {
     id: 'game',
     group: 'student',
     theme: 'AI Game',
     title: '課堂遊戲產生器',
-    tagline: '闖關、卡牌、Kahoot 題組，或 HTML 網頁小遊戲',
-    desc: '輸入單元與學習目標，設計課堂遊戲：實體闖關與卡牌、Kahoot／Quizizz 題組，或直接產出可存成 .html 打開就能玩的網頁小遊戲。',
-    text: { label: '單元與學習目標', placeholder: '例如：國二理化「浮力」：學生能判斷物體在水中的浮沉，並說明原因。', required: true },
-    options: [
-      { id: 'format', label: '形式', choices: ['實體闖關／卡牌遊戲', 'Kahoot／Quizizz 題組', '單一 HTML 網頁小遊戲'] },
-      { id: 'time', label: '時間', choices: ['10 分鐘', '20 分鐘', '一整節課'] },
-      { id: 'mode', label: '進行方式', choices: ['個人', '2–4 人小組', '全班對抗'] },
+    tagline: '輸入單元，生成可以直接玩的闖關遊戲',
+    desc: '做出一個課堂遊戲產生器：輸入單元與目標，AI 產生題庫，網頁立刻變成可以玩的闖關遊戲；有投影用的小組對抗計分板，還能匯出給學生離線玩。',
+    appName: '課堂闖關遊戲',
+    steps: [
+      {
+        title: '產生題庫並變成闖關遊戲',
+        prompt: `請在 Canvas 建立一個網頁 App「課堂闖關遊戲」，給師培生快速做出課堂遊戲。
+
+【功能】
+1. 設定畫面：單元名稱、學習目標、年級、題數（10／15／20）。
+2. 按「產生遊戲」後，用 responseSchema 回傳題庫：[{level: 1-3, question, options: [4 個], answer: 索引, explanation}]
+3. 遊戲畫面：分成 3 關（由易到難），每題有倒數計時（20 秒）、答對加分與連續答對加成、答錯顯示解析。
+4. 過關動畫與最後的成績頁（得分、正確率、需要複習的題目）。
+5. 遊戲畫面字要大、按鈕要大，適合投影與平板操作。`,
+        check: '輸入單元後直接進入可以玩的三關遊戲，答錯會看到解析。',
+      },
+      {
+        title: '小組對抗與抽題輪盤',
+        prompt: `請在目前的遊戲加入兩種課堂模式：
+1. 小組對抗（投影模式）：設定 2～6 組隊名，輪流答題，計分板顯示在畫面上方；老師可手動加減分。
+2. 抽題輪盤：轉盤動畫隨機抽題，抽中的題目全螢幕顯示，按空白鍵揭曉答案。
+3. 題庫編輯：老師可新增、修改、刪除題目，或請 AI「再多出 5 題」。
+4. 音效開關（答對、答錯、過關）。`,
+        check: '可以切換小組對抗與輪盤模式，計分板正常運作。',
+      },
+      {
+        title: '匯出給學生與 Kahoot',
+        prompt: `請在目前的 App 加入匯出功能：
+1. 「下載學生版遊戲」：把題庫內嵌，產生一個獨立的 .html 檔（不需要網路與 API 也能玩），學生打開就能自己練習。
+2. 「匯出 Kahoot 格式」：依 Kahoot 試算表匯入格式下載 CSV（題目、4 個選項、作答秒數、正確答案）。
+3. 題庫存成清單（localStorage），可依單元重新開啟。
+4. 遊戲結束後顯示 3 個「反思解密」提問，把遊戲經驗連回學科概念。`,
+        check: '可以下載能離線遊玩的學生版 .html，以及 Kahoot 匯入用 CSV。',
+      },
     ],
-    followUps: ['增加難度分級', '換成另一個單元的題目', '加入計分排行榜（HTML 版）'],
-    runLabel: '產生遊戲',
   },
   {
     id: 'assess',
     group: 'student',
     theme: 'AI Assessment',
     title: '出題與錯誤診斷',
-    tagline: '自動出題與解析，或上傳學生作答找出迷思',
-    desc: '依單元出小考與詳解、改寫成素養題，或上傳學生作答照片，分析錯誤類型、背後的迷思概念與補救建議。',
-    file: {
-      accept: '.pdf,.png,.jpg,.jpeg,.webp,.heic',
-      mimes: PDF_OR_IMAGE,
-      maxMB: 10,
-      label: '上傳考卷或學生作答（選填）',
-      hint: '照片或 PDF，上限 10 MB；請遮住學生姓名',
-      required: false,
-    },
-    text: { label: '單元，或貼上題目／學生作答', placeholder: '例如：國一數學「正負數的加減」', required: false },
-    options: [
-      { id: 'task', label: '任務', choices: ['出一份小考（含解析）', '分析學生錯誤並給補救建議', '把題目改寫成素養題', '依布魯姆層次出題'] },
-      { id: 'count', label: '題數', choices: ['5 題', '10 題', '20 題'] },
+    tagline: '自動出題，拍學生作答找出迷思概念',
+    desc: '做出一個評量工具：依單元與布魯姆層次自動出題並產生試卷與答案卷；拍下學生作答，分析錯誤類型與迷思概念，彙整全班的錯誤分布。',
+    appName: '出題與錯誤診斷',
+    upload: IMAGE_UPLOAD,
+    steps: [
+      {
+        title: '依布魯姆層次出題',
+        prompt: `請在 Canvas 建立一個網頁 App「出題與錯誤診斷」，給師培生設計評量。
+
+【這一步先完成：出題】
+1. 輸入：年級、科目、單元、題型（單選／填充／簡答／素養題組）、題數、布魯姆層次分配（記憶、理解、應用、分析、評鑑、創造各幾題）。
+2. 用 responseSchema 回傳：[{type, bloom, stem, options, answer, explanation, misconception}]（misconception：這題常見的錯誤想法）
+3. 顯示「試卷」與「答案卷」兩個頁籤；試卷可列印（A4 版面），答案卷含詳解。
+4. 每題可「換一題」「改難一點」「改簡單一點」。`,
+        check: '產生的題目標示布魯姆層次，試卷與答案卷可以分開列印。',
+      },
+      {
+        title: '拍學生作答做錯誤診斷',
+        prompt: `請在目前的 App 加入「錯誤診斷」頁籤：
+1. 上傳或拍下學生作答（可多張），可選擇對應的題目。
+2. 請 Gemini 分析，用 responseSchema 回傳：[{question, studentAnswer, correct: true/false, errorType: 概念/計算/審題/表達, misconception, remedy}]
+3. 以表格呈現，並給一段「3 分鐘補救教學建議」。
+4. 系統指示：不得推測或評論學生的身分、家庭背景；提醒上傳前遮住學生姓名。`,
+        check: '上傳學生作答後，出現錯誤類型、迷思概念與補救建議表。',
+      },
+      {
+        title: '全班統計與匯出',
+        prompt: `請在目前的 App 加入：
+1. 全班統計：累積多位學生的診斷結果（以座號代稱），用 Chart.js 畫出各題答對率與錯誤類型分布。
+2. Gemini 整理「全班最常見的 3 個迷思概念」與對應的補救活動。
+3. 一鍵產生「同概念補救練習 3 題」。
+4. 匯出：試卷與答案卷下載 Word（.doc）、題目匯出成可貼進 Google 表單的格式、診斷結果下載 CSV。`,
+        check: '出現全班答對率與錯誤類型圖表，可以下載試卷與診斷結果。',
+      },
     ],
-    followUps: ['轉成 Google 表單可貼上的格式', '產生同概念的補救練習 3 題', '做一份評分規準 Rubric'],
-    runLabel: '開始',
   },
   {
     id: 'classroom',
     group: 'student',
     theme: 'AI Teaching Agent',
     title: '班級經營模擬器',
-    tagline: 'AI 扮演學生或家長，練習處理課堂狀況',
-    desc: 'AI 扮演上課滑手機、起衝突、拒絕發言的學生或來電的家長，你用打字回應，練習真實情境的應對；結束時給你總評與建議話術。',
-    text: { label: '補充情境（選填）', placeholder: '例如：國二，第 7 節，剛考完段考，全班很浮躁', required: false },
-    options: [
-      { id: 'scene', label: '情境', choices: ['學生上課滑手機', '小組成員起衝突', '學生拒絕發言', '學生頂嘴挑釁', '家長來電抱怨成績'] },
-      { id: 'grade', label: '年級', choices: ['國小', '國中', '高中'] },
-      { id: 'feedback', label: '回饋方式', choices: ['每回合給提示', '結束才總評'] },
+    tagline: 'AI 扮演學生或家長，練習臨場應對',
+    desc: '做出一個班級經營模擬器：AI 扮演滑手機、起衝突、拒絕發言的學生或來電的家長，你打字回應，畫面顯示對方的情緒變化，最後得到總評與建議話術。',
+    appName: '班級經營模擬器',
+    steps: [
+      {
+        title: '建立角色扮演對話',
+        prompt: `請在 Canvas 建立一個網頁 App「班級經營模擬器」，讓師培生練習處理課堂突發狀況。
+
+【功能】
+1. 情境選擇卡片：學生上課滑手機、小組成員起衝突、學生拒絕發言、學生頂嘴挑釁、家長來電抱怨成績；另可選年級（國小／國中／高中）與補充情境。
+2. 開始後，AI 先用 2～3 句描述場景，再以學生（或家長）的身分說第一句話。
+3. 師培生在下方輸入回應，AI 以角色身分自然回應，態度會依老師的處理方式改變。
+4. 每回合用 responseSchema 回傳：{ reply: 角色的話, emotion: 0-100（越高越激動）, coach_tip: 一句教練提示 }
+5. 對話以聊天泡泡呈現；教練提示以小字顯示在角色回應下方（可開關）。
+6. systemInstruction：「角色要真實但不得出現人身攻擊、暴力或自我傷害內容；若老師的回應可能傷害學生，立即以教練身分提醒。」`,
+        check: '選一個情境後，AI 以學生身分對話，你的每次回應都會得到教練提示。',
+      },
+      {
+        title: '情緒儀表與學生人設',
+        prompt: `請在目前的 App 加入：
+1. 情緒儀表：畫面上方顯示角色的情緒指數（0～100）與變化折線圖（Chart.js），讓師培生看到自己的回應造成的影響。
+2. 學生人設：焦慮型、挑釁型、退縮型、討好型、家長（焦慮／強勢），每種有不同的說話方式與觸發點。
+3. 難度：簡單（角色容易被安撫）／困難（需要多次正確引導）。
+4. 「暫停並請教練示範」：AI 示範一段理想的回應，再回到對話。`,
+        check: '畫面上方的情緒指數會隨你的回應升降，可以選不同學生人設與難度。',
+      },
+      {
+        title: '總評報告與實習反思',
+        prompt: `請在目前的 App 加入「結束並總評」：
+1. 依整段對話產生總評報告：做得好的地方、可以改進的地方、建議話術（2～3 句）、相關的正向管教原則，並附情緒變化圖。
+2. 自動產生 ORID 反思紀錄草稿（客觀事實、感受、詮釋、決定），師培生可修改，適合放進實習檔案。
+3. 練習紀錄存成清單（localStorage）：日期、情境、最終情緒指數，可重新查看。
+4. 匯出總評與反思為 Word（.doc）。`,
+        check: '結束後出現總評報告與 ORID 反思草稿，可以下載 Word。',
+      },
     ],
-    followUps: ['結束，請給我總評', '換一個更難處理的學生', '示範一次理想的處理方式'],
-    runLabel: '開始模擬',
   },
 ];
 
-export const TOOL_IDS = TOOLS.map((t) => t.id);
-
 export const toolsInGroup = (g: ToolGroup) => TOOLS.filter((t) => t.group === g);
 
-const BASE_SYSTEM =
-  '你是協助台灣師資培育的教學與研究助理，服務對象是師培生與大學教授。除非使用者要求其他語言，一律使用臺灣繁體中文與臺灣教育現場用語，並以 Markdown（標題、條列、表格）輸出。不確定的事實、課綱代碼、文獻資訊請標註「（請查證）」，不可杜撰。';
-
-export const TOOL_SYSTEM: Record<ToolId, string> = {
-  sandbox: BASE_SYSTEM,
-  pdf: `${BASE_SYSTEM}使用者會上傳 PDF：所有回答都必須根據該文件內容，文件沒有提到的請明說「文件未提及」，引用內容時盡量標註頁碼（例如：p.3）。`,
-  translate: `${BASE_SYSTEM}你同時是專業譯者：譯文須忠實、通順、符合目標語言的習慣，不可增刪原意，不可省略段落。專有名詞第一次出現時，以括號保留原文。`,
-  ocr: `${BASE_SYSTEM}你負責辨識圖片或掃描檔中的文字：逐字辨識，看不清楚或無法確定的字以【?】標示，絕不猜測補寫。數學式以 LaTeX 或一般文字表示。`,
-  research: `${BASE_SYSTEM}你是資深教育研究方法顧問。可以建議研究方向與檢索關鍵詞，但絕不可列出具體的作者、年份、篇名或期刊卷期，除非使用者提供；需要文獻支持之處以「（待補文獻）」標示。`,
-  writing: `${BASE_SYSTEM}你是學術編輯。修改時不可改變作者原意、不可新增未提供的引用或數據；英文潤飾以學術英文為準。`,
-  data: `${BASE_SYSTEM}你是教育統計與質性研究顧問。所有計算請列出公式或步驟，數值結果提醒使用者以 SPSS、R 或 Excel 重新計算確認；不可捏造資料中沒有的數值。`,
-  tutor: `${BASE_SYSTEM}你熟悉 Gemini Gem、ChatGPT 自訂 GPT 與 NotebookLM 的設定方式，以及 RAG（檢索增強生成）知識庫的資料整理原則，重視學術誠信與學生隱私。`,
-  workflow: `${BASE_SYSTEM}你是教育行政與研究流程自動化顧問，熟悉 Google Apps Script、Power Automate 與生成式 AI。提供的程式碼必須完整可執行並附中文註解；涉及學生個資時提醒權限與隱私設定。`,
-  lesson: `${BASE_SYSTEM}你是資深教學輔導教師，熟悉 108 課綱與台灣各版本教科書的教學節奏。若使用者上傳課本頁面，教學內容必須以頁面內容為準。`,
-  visual: `${BASE_SYSTEM}你是教學視覺設計師與 AI 生圖提示詞專家，重視內容的科學正確性與適齡性；提示詞不得包含真實人物、品牌或受著作權保護的角色。`,
-  game: `${BASE_SYSTEM}你是遊戲化教學設計師。遊戲機制必須緊扣學習目標，並照顧程度較弱的學生。產出 HTML 時，必須是單一檔案、不依賴任何外部資源、手機與電腦都能操作。`,
-  assess: `${BASE_SYSTEM}你是評量與學習診斷專家，熟悉素養導向評量與布魯姆認知層次。解析必須正確，若答案有爭議請標示。分析學生作答時不得推測或評論學生身分與家庭背景。`,
-  classroom: `${BASE_SYSTEM}你是班級經營訓練教練，負責扮演情境中的學生或家長，讓師培生練習應對。角色要真實，但不得出現人身攻擊、暴力、自我傷害等不適當內容；若師培生的回應可能傷害學生，請立即以教練身分提醒。`,
-  apa: `${BASE_SYSTEM}你熟悉 APA 第 7 版格式（含中文文獻慣例：作者全名、（年）、書名或期刊名、卷（期）、頁碼）。使用者沒提供的資訊不可自行補上，請以【缺：出版年】這類方式標示；可能有誤的資訊在該筆後註記「（請查證）」。`,
-};
-
-export interface ToolInput {
-  text: string;
-  options: Record<string, string>;
-  fileName?: string;
-}
-
-export function defaultOptions(tool: ToolDef): Record<string, string> {
-  return Object.fromEntries((tool.options || []).map((o) => [o.id, o.choices[0]]));
-}
-
-/** 第一則訊息（送給 AI 的完整指令）。也用於「複製指令」到外部 AI。 */
-export function buildToolPrompt(id: ToolId, input: ToolInput): string {
-  const text = input.text.trim();
-  const o = input.options;
-  const file = input.fileName ? `（已附上檔案：${input.fileName}）` : '';
-
-  switch (id) {
-    case 'sandbox': {
-      const style = o.style && o.style !== '一般' ? `【回答風格】${o.style}\n\n` : '';
-      return `${style}${file ? file + '\n\n' : ''}${text}`;
-    }
-    case 'pdf': {
-      const task = o.task || '重點摘要';
-      const taskText: Record<string, string> = {
-        重點摘要: '請整理這份 PDF 的重點摘要：先用 3 句話說明全文主旨，再條列 5–8 個重點（附頁碼），最後列出值得注意的數據或結論。',
-        逐章節大綱: '請依這份 PDF 的章節順序，整理成階層式大綱（章 → 節 → 重點），每個重點附頁碼。',
-        '出 10 題理解測驗（附解答）': '請根據這份 PDF 出 10 題理解測驗（7 題單選、3 題簡答），題目涵蓋不同章節；全部題目後另列解答與出處頁碼。',
-        整理成上課用的重點講義: '請把這份 PDF 整理成一份上課用的重點講義：學習目標、核心概念（附簡短說明與例子）、重點整理表格、課後思考題 3 題。',
-        只回答我的問題: '請只根據這份 PDF 回答我下面的問題。',
-      };
-      return `${file}${taskText[task] || taskText['重點摘要']}${text ? `\n\n我的問題／補充要求：${text}` : ''}`;
-    }
-    case 'translate': {
-      const lang = o.lang || '繁體中文（臺灣）';
-      const layout = o.layout || '逐段對照（原文＋譯文）';
-      const tone = o.tone || '忠實學術';
-      const layoutText: Record<string, string> = {
-        '逐段對照（原文＋譯文）':
-          '請用「沉浸式翻譯」格式輸出：每一段先以 Markdown 引用（開頭加「> 」）呈現原文，下一段緊接著是譯文；依原文順序逐段處理，不要合併或省略段落。標題保持標題格式。',
-        左右對照表格: '請用兩欄 Markdown 表格輸出，左欄「原文」、右欄「譯文」，每一列放一段（長段落可拆成句子），依原文順序。',
-        只要譯文: '只輸出譯文，保持原本的段落與標題結構。',
-      };
-      return [
-        `請把${input.fileName ? '附上的檔案' : '下面的文字'}翻譯成「${lang}」，語氣：${tone}。`,
-        layoutText[layout] || layoutText['逐段對照（原文＋譯文）'],
-        '最後附上「專有名詞對照」小表格（原文／譯名），若沒有專有名詞可省略。',
-        text ? `【要翻譯的文字】\n"""\n${text}\n"""` : file,
-      ]
-        .filter(Boolean)
-        .join('\n\n');
-    }
-    case 'ocr': {
-      const format = o.format || '照原樣轉成文字';
-      const fix = o.fix || '保留原文不修改';
-      const formatText: Record<string, string> = {
-        照原樣轉成文字: '請把內容逐字轉成文字，盡量保留原本的分行、編號與版面順序。',
-        整理成條列筆記: '請先辨識全部文字，再整理成有標題的條列式筆記（保留所有重點，不要自行增加內容）。',
-        表格內容轉成表格: '請把圖中的表格轉成 Markdown 表格；表格以外的文字照原樣放在表格前後。',
-        轉成可編輯的學習單: '請把內容轉成可編輯的學習單格式：保留題號與題目，作答處以「＿＿＿＿」表示。',
-      };
-      return [
-        `${file}請辨識這份圖片／掃描檔中的文字。`,
-        formatText[format] || formatText['照原樣轉成文字'],
-        fix === '校正明顯錯字並標示' ? '遇到明顯錯字請校正，並以（原：○○）標示原本的寫法。' : '不要修改原文，錯字也照原樣保留。',
-        '看不清楚的字以【?】標示。最後用一行說明辨識信心（高／中／低）與需要人工確認的地方。',
-        text ? `補充說明：${text}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
-    }
-    case 'research': {
-      const approach = o.approach || '還沒決定';
-      const cross = o.cross || '不需要';
-      return [
-        `我的研究興趣：${text}`,
-        `研究取向：${approach}${cross !== '不需要' ? `；希望結合：${cross}` : ''}`,
-        '請依序產出：',
-        '1. 研究背景與重要性（3 點）',
-        '2. 可能的研究缺口 3 個（說明為何是缺口；需要文獻支持之處標「（待補文獻）」，不要列出具體文獻）',
-        '3. 研究問題 3 組（每組一個主問題＋2 個子問題）',
-        `4. 對應的研究設計表格：研究對象、方法（${approach === '還沒決定' ? '請建議最適合的取向' : approach}）、資料蒐集工具、分析方式`,
-        cross !== '不需要' ? `5. 與「${cross}」跨域結合的切入點與可合作的系所` : '5. 可延伸的跨領域合作方向（1–2 個）',
-        '6. 可行性與風險評估（時間、樣本、倫理）',
-        '7. 建議檢索關鍵詞（中英文）與資料庫（如 ERIC、華藝、臺灣博碩士論文知識加值系統）',
-      ].join('\n');
-    }
-    case 'writing': {
-      const task = o.task || '學術潤飾（中文）';
-      const level = o.level || '中度：調整句構';
-      const taskText: Record<string, string> = {
-        '學術潤飾（中文）': '請潤飾成通順、精確的中文學術寫作。先給修改後全文，再用表格列出「原句／修改後／修改理由」。',
-        'English academic polishing':
-          'Please polish the text into clear academic English. Give the revised text first, then a table of "Original / Revised / Reason" (reasons may be in Traditional Chinese).',
-        撰寫中英文摘要: '請根據內容撰寫中文摘要（300–500 字）與英文 Abstract（150–250 words），並各附 3–5 個關鍵詞。',
-        回覆審查意見: '請逐條回覆審查意見：用表格列出「審查意見／回應說明／修改處（頁碼或段落）」，語氣誠懇專業；需要我補資料或做決定的地方請標示。',
-        '精簡字數（保留論點）': '請在保留所有論點與數據的前提下精簡約 30% 字數，並標示刪去了哪些內容。',
-      };
-      return [
-        file,
-        taskText[task] || taskText['學術潤飾（中文）'],
-        task !== '撰寫中英文摘要' && task !== '回覆審查意見' ? `修改程度：${level}。` : '',
-        '不要改變原意，不要新增任何未提供的引用、數據或結論。',
-        text ? `\n【原文】\n"""\n${text}\n"""` : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
-    }
-    case 'data': {
-      const goal = o.goal || '描述統計與趨勢解讀';
-      const goalText: Record<string, string> = {
-        描述統計與趨勢解讀: '請整理描述統計（平均數、標準差、最小／最大值、人數）並解讀主要趨勢與異常值，用表格呈現。',
-        建議適合的統計方法: '請判斷資料型態與研究設計，建議最適合的統計檢定（說明前提假設、為何適合、替代方案），並列出在 SPSS／R 的操作步驟。',
-        '撰寫結果段落（APA 格式）': '請撰寫符合 APA 第 7 版的結果段落（含統計量的報告格式），無法由資料計算的數值以「＿＿」留空。',
-        '質性資料主題分析（編碼）': '請進行主題分析：初始編碼 → 歸納主題 → 每個主題附 2–3 句代表性引文，並用表格整理「主題／定義／代表引文／出現次數」。',
-      };
-      return [
-        file,
-        goalText[goal] || goalText['描述統計與趨勢解讀'],
-        '計算請列出步驟；不可捏造資料中沒有的數值；最後提醒需以統計軟體再次確認。',
-        text ? `\n【資料／研究設計】\n"""\n${text}\n"""` : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
-    }
-    case 'tutor': {
-      const platform = o.platform || 'Gemini Gem';
-      const style = o.style || '蘇格拉底式引導';
-      return [
-        `${file}請幫我在「${platform}」建立一個課程專屬 AI 助教，風格：${style}。`,
-        `課程與需求：${text}`,
-        '請依序產出：',
-        '1. 系統指令（放在一個程式碼區塊，可直接貼上平台）：角色、任務、回答方式、引用課程資料的規則、不知道時怎麼回答',
-        '2. 知識庫（RAG）資料準備：應上傳哪些檔案、如何切分與命名、多久更新一次',
-        '3. 護欄：學術誠信（不代寫作業）、隱私、超出課程範圍時的處理',
-        '4. 10 個測試問題與預期的理想回應方式（表格）',
-        `5. 在「${platform}」的設定步驟`,
-        '6. 學期中評估助教成效的 3 個指標',
-      ].join('\n');
-    }
-    case 'workflow': {
-      const stack = o.stack || '不確定，請建議';
-      const skill = o.skill || '完全不會寫程式';
-      return [
-        `我想自動化這件工作：${text}`,
-        `偏好工具：${stack}；我的程式能力：${skill}。`,
-        '請依序產出：',
-        '1. 任務拆解：條列每個步驟（輸入 → 處理 → 輸出）',
-        '2. 分工表：哪些步驟交給 AI、哪些保留人工判斷，以及理由',
-        '3. 每個 AI 步驟可直接使用的 Prompt 範本',
-        stack.includes('Apps Script') || stack.includes('不確定')
-          ? '4. 若適合用 Google Apps Script：提供完整可執行的程式碼（附中文註解）與安裝步驟（從開啟編輯器到設定觸發條件）'
-          : '4. 在所選工具中的具體設定步驟',
-        '5. 預估每週可節省的時間',
-        '6. 風險與注意事項：個資、錯誤檢查、學術誠信',
-      ].join('\n');
-    }
-    case 'lesson': {
-      const grade = o.grade || '國中';
-      const periods = o.periods || '1 節';
-      const output = o.output || '教案＋簡報大綱＋學習單';
-      const parts: string[] = [];
-      if (output !== '只要學習單')
-        parts.push(`教案（${periods}，每節 45 分鐘）：學習目標（對應核心素養）、學生先備知識、教學流程表（時間／教師活動／學生活動／評量）`);
-      if (output === '教案＋簡報大綱＋學習單') parts.push('簡報大綱：每頁標題、重點文字、建議圖像、教師提問');
-      if (output !== '只要教案') parts.push('學習單：情境引導、由淺入深 3 層問題、動手任務、自我檢核，作答處以「＿＿＿」表示');
-      return [
-        `${file}請幫我備課：${grade}，${text}。${input.fileName ? '教學內容請以附上的課本頁面為準。' : ''}`,
-        '請產出：',
-        ...parts.map((p, i) => `${i + 1}. ${p}`),
-        '最後列出這個單元學生常見的 3 個迷思概念與教師提醒。',
-      ].join('\n');
-    }
-    case 'visual': {
-      const output = o.output || '教學插圖（AI 生圖提示詞）';
-      const style = o.style || '扁平插畫';
-      const audience = o.audience || '國中';
-      const outText: Record<string, string> = {
-        '教學插圖（AI 生圖提示詞）':
-          '請提供 3 組生圖提示詞（中文＋英文），分別適用 Gemini（Imagen）、ChatGPT、Canva Magic Media；每組附構圖說明與要避免的內容（negative prompt）。',
-        資訊圖表版面: '請設計一張資訊圖表：版面分區（用表格描述格線）、每區的標題與精簡文字、建議圖示、配色（附色碼）。',
-        簡報封面與配色:
-          '請設計簡報封面與整份簡報的視覺規範：標題文案 3 個選項、配色（主色／輔色／強調色，附色碼）、字體建議、版面描述，以及封面圖的生圖提示詞。',
-        '30 秒教學短影片分鏡': '請設計 30 秒教學短影片分鏡表：秒數／畫面／旁白／字幕／音效，並附封面縮圖的生圖提示詞。',
-      };
-      return [
-        `要呈現的概念：${text}（對象：${audience}，風格：${style}）`,
-        outText[output] || outText['教學插圖（AI 生圖提示詞）'],
-        '最後附「科學正確性檢查清單」：畫面中容易畫錯或誤導的地方。',
-      ].join('\n');
-    }
-    case 'game': {
-      const format = o.format || '實體闖關／卡牌遊戲';
-      const time = o.time || '20 分鐘';
-      const mode = o.mode || '2–4 人小組';
-      const formatText: Record<string, string> = {
-        '實體闖關／卡牌遊戲':
-          '請設計實體遊戲：世界觀與角色、遊戲規則、3 個關卡（各對應一個學習重點）、需要的教具清單（可直接列印的卡牌內容用表格列出）、計分與求助機制。',
-        'Kahoot／Quizizz 題組': '請產出 Kahoot／Quizizz 題組：題目由淺入深，每題 4 個選項、正確答案、作答秒數建議與解析，並以表格輸出方便匯入。',
-        '單一 HTML 網頁小遊戲':
-          '請產出一個完整的單一 HTML 網頁小遊戲（HTML、CSS、JavaScript 全在一個檔案，不使用任何外部資源），手機與電腦都能操作，有開始畫面、計分與結束回饋。程式碼放在一個 html 程式碼區塊；區塊前用 3 個步驟說明如何存成 .html 檔並用瀏覽器開啟。',
-      };
-      return [
-        `單元與學習目標：${text}`,
-        `遊戲時間：${time}；進行方式：${mode}。`,
-        formatText[format] || formatText['實體闖關／卡牌遊戲'],
-        '最後附 3 個遊戲結束後的「反思解密」提問，把遊戲經驗連回學科概念。',
-      ].join('\n');
-    }
-    case 'assess': {
-      const task = o.task || '出一份小考（含解析）';
-      const count = o.count || '10 題';
-      const taskText: Record<string, string> = {
-        '出一份小考（含解析）': `請出一份 ${count} 的小考：題型混合（選擇、填充、簡答），由淺入深。全部題目後另列答案與詳解（考點、解題步驟、容易錯的地方）。`,
-        分析學生錯誤並給補救建議:
-          '請分析學生的作答：用表格列出「題號／錯誤內容／錯誤類型（概念、計算、審題、表達）／背後的迷思概念／補救建議」，最後給教師一段 3 分鐘的補救教學建議。',
-        把題目改寫成素養題: `請把題目改寫成 ${count} 的素養導向題組：真實生活情境、圖表或短文資料、多層次子題，附評分指標。`,
-        依布魯姆層次出題: `請依布魯姆修訂版六個認知層次出題（共 ${count}），每題標示層次，並附參考答案。`,
-      };
-      return [file, `單元／題目／作答內容：${text || '（見附件）'}`, taskText[task] || taskText['出一份小考（含解析）']]
-        .filter(Boolean)
-        .join('\n');
-    }
-    case 'classroom': {
-      const scene = o.scene || '學生上課滑手機';
-      const grade = o.grade || '國中';
-      const feedback = o.feedback || '每回合給提示';
-      const who = scene.startsWith('家長') ? '家長' : '學生';
-      return [
-        `請和我進行班級經營角色扮演。情境：${grade}，${scene}。${text ? `補充：${text}。` : ''}`,
-        `你扮演情境中的${who}，我扮演老師。規則：`,
-        `1. 先用 2–3 句描述場景，接著以${who}的身分說出第一句話，然後停下來等我回應。`,
-        `2. 之後每次我回應，你就以${who}的身分自然回應（反應要真實，會依我的處理方式改變態度）。`,
-        feedback === '每回合給提示' ? '3. 每次角色回應後，另起一行以「🧭 教練提示：」給我一句簡短建議。' : '3. 過程中不要跳出角色給建議。',
-        '4. 當我輸入「結束」或要求總評時，跳出角色，用表格總評：做得好的地方、可以改進的地方、建議話術（2–3 句）、相關的正向管教原則。',
-      ].join('\n');
-    }
-    case 'apa': {
-      const output = o.output || '參考文獻列表';
-      const order = o.order || '依 APA 規則排序（中文在前、英文在後）';
-      const rules = [
-        `輸出「參考文獻」列表，${order === '保持我輸入的順序' ? '保持我輸入的順序' : '依 APA 規則排序：中文文獻依作者姓氏筆畫、英文文獻依姓氏字母，中文在前、英文在後'}。`,
-        output === '參考文獻＋文內引用範例' ? '每筆附上文內引用範例（括號式與敘述式各一）。' : '',
-        '斜體部分用 Markdown 斜體（*書名*）表示。缺少的資訊以【缺：○○】標示，不可自行補上。',
-        '最後用表格列出每筆的檢查結果：完整／缺少哪些資訊／需要查證的地方。',
-      ].filter(Boolean);
-      return [
-        `${file}請把${input.fileName && !text ? '附上檔案中的文獻' : '下面的文獻資料'}整理成 APA 第 7 版格式。`,
-        ...rules.map((r, i) => `${i + 1}. ${r}`),
-        text ? `\n【文獻資料】\n"""\n${text}\n"""` : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
-    }
-  }
-}
-
-/** 第一則訊息在對話紀錄中顯示的精簡版本 */
-export function summarizeToolInput(tool: ToolDef, input: ToolInput): string {
-  const opts = (tool.options || []).map((o) => `${o.label}：${input.options[o.id]}`).join('・');
-  const parts = [input.fileName ? `📎 ${input.fileName}` : '', opts, input.text.trim()];
-  return parts.filter(Boolean).join('\n');
-}
-
-/** 檢查是否可以送出；回傳錯誤訊息或 null */
-export function validateToolInput(tool: ToolDef, input: ToolInput): string | null {
-  if (tool.file?.required && !input.fileName) return `請先${tool.file.label}。`;
-  if (tool.text.required && !input.text.trim()) return `請輸入${tool.text.label}。`;
-  const needOne: Partial<Record<ToolId, string>> = {
-    translate: '請貼上要翻譯的文字，或上傳檔案。',
-    apa: '請貼上文獻資料，或上傳論文首頁。',
-    writing: '請貼上要處理的段落，或上傳文稿。',
-    data: '請貼上資料，或上傳 CSV／PDF。',
-    assess: '請輸入單元、貼上題目，或上傳學生作答。',
-  };
-  const missing = needOne[tool.id];
-  if (missing && !input.text.trim() && !input.fileName) return missing;
-  return null;
+/** 某個工具的全部提示詞，整理成 Markdown（下載講義用） */
+export function toolGuideMarkdown(tool: ToolDef, level = 1): string {
+  const h = '#'.repeat(level);
+  const parts = [
+    `${h} ${tool.title}`,
+    tool.desc,
+    `**做法**：開啟 Gemini（${GEMINI_URL}），在輸入框下方的「工具」選 **Canvas**，依序貼上以下 ${tool.steps.length} 個步驟的提示詞。每一步等 Canvas 完成並在右側預覽測試後，再貼下一步。完成後按 Canvas 右上角「分享」產生連結。`,
+  ];
+  tool.steps.forEach((s, i) => {
+    parts.push(`${h}# 步驟 ${i + 1}：${s.title}`, '```', stepPrompt(tool, i), '```', `**完成後應該看到**：${s.check}`);
+  });
+  return parts.join('\n\n');
 }
