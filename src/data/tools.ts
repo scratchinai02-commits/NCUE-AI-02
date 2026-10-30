@@ -22,9 +22,18 @@ export type ToolId =
   | 'visual'
   | 'game'
   | 'assess'
-  | 'classroom';
+  | 'classroom'
+  // Codex / Antigravity 工具箱（見 agentTools.ts）
+  | 'revive'
+  | 'lesson3d'
+  | 'liveclass'
+  | 'coursebot'
+  | 'analysis';
 
 export type ToolGroup = 'common' | 'professor' | 'student';
+
+/** gemini：在 Gemini Canvas 生成單一 HTML 工具；agent：在 Codex／Antigravity 打開資料夾，寫出完整專案 */
+export type ToolPlatform = 'gemini' | 'agent';
 
 export const TOOL_GROUPS: { id: ToolGroup; title: string; subtitle: string }[] = [
   { id: 'common', title: '共同常用', subtitle: '上傳檔案、翻譯、辨識與引用，師生都用得到' },
@@ -51,12 +60,27 @@ export interface ToolDef {
   appName: string;
   /** 若 App 需要上傳檔案，在第 1 步加上檔案處理規格 */
   upload?: string;
+  /** 預設 gemini */
+  platform?: ToolPlatform;
+  /** agent 專案：使用的技術與部署方式 */
+  stack?: string;
+  /** agent 專案：開始前要準備的東西 */
+  prereq?: string[];
   steps: ToolStep[];
 }
 
 export const GEMINI_URL = 'https://gemini.google.com/app';
 export const DEFAULT_MODEL = 'gemini-3.1-flash-lite';
 export const ALT_MODEL = 'gemini-3.8-flash';
+
+export const CODEX_URL = 'https://chatgpt.com/codex';
+export const ANTIGRAVITY_URL = 'https://antigravity.google/download';
+/** agent 專案後端呼叫 Gemini 時的預設模型（與本站伺服器相同） */
+export const AGENT_MODEL = 'gemini-3.8-flash';
+
+/** 換工具、換電腦或隔天繼續時，先貼這段 */
+export const HANDOFF_PROMPT =
+  '請先閱讀 AGENTS.md 與 docs/WORKLOG.md，用 5 行以內告訴我：這個專案做什麼、目前完成到第幾步、還有哪些已知問題、要怎麼在本機啟動。說完就停下來，等我貼下一步的提示詞。';
 
 /** 每個工具第 1 步都會附上的共通技術規格 */
 export function commonSpec(upload?: string) {
@@ -81,11 +105,48 @@ export function commonSpec(upload?: string) {
 
 const KEEP = '\n\n請保留所有既有功能，只修改需要的部分，並確認整個 App 仍可正常執行。';
 
+/** Codex／Antigravity 專案第 1 步附上的工作規則（分階段、每步停下來、可互相接手） */
+export function agentSpec() {
+  return [
+    '【工作規則（每一步都要遵守）】',
+    '- 先檢查這個資料夾的內容與電腦環境（Node.js 22 以上、Git、Python 3，依專案需要），缺少的請告訴我怎麼安裝，不要自行安裝系統軟體。',
+    '- 動手前先用 5～10 行列出這一步的計畫與檔案結構，再開始實作。',
+    '- 在專案根目錄建立 AGENTS.md：專案目標、技術選擇、資料夾結構、啟動／測試／部署指令、程式風格；之後每一步都遵守它，有變動就更新。',
+    '- 建立 docs/WORKLOG.md：每一步完成後記錄「做了什麼、怎麼驗證、已知問題、下一步」，讓 Codex 與 Antigravity 可以互相接手。',
+    '- 使用 Git 管理，每一步完成就 commit 一次（中文訊息），改壞了可以退回。',
+    '- 介面使用臺灣繁體中文，手機與電腦都能操作；按鈕有清楚的文字，可以用鍵盤操作。',
+    `- 需要 AI 時使用 Gemini API（Node.js 用官方 @google/genai，Python 用 google-genai），模型名稱放在環境變數 GEMINI_MODEL（預設 ${AGENT_MODEL}）。`,
+    '- API 金鑰只放在 .env（加入 .gitignore），並提供 .env.example；前端程式碼不得出現金鑰，呼叫 AI 一律經過後端。',
+    '- 不刪除、不覆寫我資料夾裡原有的檔案；需要改動既有檔案前先說明。',
+    '- 需要付費服務、登入帳號或輸入金鑰時，停下來問我，不要自己決定。',
+    '- 每一步結束時：執行建置與測試確認沒有錯誤 → 更新 docs/WORKLOG.md → git commit → 告訴我怎麼在本機試用、改了哪些檔案 → 停下來等我貼下一步，不要自行往下做。',
+  ].join('\n');
+}
+
+const AGENT_KEEP =
+  '\n\n完成後請：執行建置與測試，確認既有功能仍正常 → 更新 docs/WORKLOG.md（AGENTS.md 有變動也一併更新）→ git commit → 告訴我怎麼試用、改了哪些檔案，然後停下來等我。';
+
 /** 取得某一步要貼上的完整提示詞 */
 export function stepPrompt(tool: ToolDef, index: number): string {
   const step = tool.steps[index];
   if (!step) return '';
+  if (tool.platform === 'agent') return index === 0 ? `${step.prompt}\n\n${agentSpec()}` : `${step.prompt}${AGENT_KEEP}`;
   return index === 0 ? `${step.prompt}\n\n${commonSpec(tool.upload)}` : `${step.prompt}${KEEP}`;
+}
+
+/** 講義裡的「做法」說明 */
+export function howToText(tool: ToolDef): string {
+  if (tool.platform === 'agent') {
+    return [
+      `**做法**：建立一個新資料夾（需要素材就先放進去），用 Codex（${CODEX_URL}，桌面 App、CLI 或 VS Code 擴充）或 Antigravity（${ANTIGRAVITY_URL}）開啟這個資料夾，依序貼上以下 ${tool.steps.length} 個步驟的提示詞。每一步 AI 完成後會停下來，先依它的說明在本機試用，確認沒問題再貼下一步。`,
+      tool.stack ? `**技術與部署**：${tool.stack}` : '',
+      tool.prereq?.length ? `**開始前準備**：${tool.prereq.join('；')}` : '',
+      `**換工具或隔天繼續時，先貼這段接手提示詞**：${HANDOFF_PROMPT}`,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  return `**做法**：開啟 Gemini（${GEMINI_URL}），在輸入框下方的「工具」選 **Canvas**，依序貼上以下 ${tool.steps.length} 個步驟的提示詞。每一步等 Canvas 完成並在右側預覽測試後，再貼下一步。完成後按 Canvas 右上角「分享」產生連結。`;
 }
 
 const PDF_UPLOAD =
@@ -742,11 +803,7 @@ export const toolsInGroup = (g: ToolGroup) => TOOLS.filter((t) => t.group === g)
 /** 某個工具的全部提示詞，整理成 Markdown（下載講義用） */
 export function toolGuideMarkdown(tool: ToolDef, level = 1): string {
   const h = '#'.repeat(level);
-  const parts = [
-    `${h} ${tool.title}`,
-    tool.desc,
-    `**做法**：開啟 Gemini（${GEMINI_URL}），在輸入框下方的「工具」選 **Canvas**，依序貼上以下 ${tool.steps.length} 個步驟的提示詞。每一步等 Canvas 完成並在右側預覽測試後，再貼下一步。完成後按 Canvas 右上角「分享」產生連結。`,
-  ];
+  const parts = [`${h} ${tool.title}`, tool.desc, howToText(tool)];
   tool.steps.forEach((s, i) => {
     parts.push(`${h}# 步驟 ${i + 1}：${s.title}`, '```', stepPrompt(tool, i), '```', `**完成後應該看到**：${s.check}`);
   });

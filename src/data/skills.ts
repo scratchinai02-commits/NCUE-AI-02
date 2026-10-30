@@ -279,6 +279,7 @@ export const skillsData: Skill[] = [
 
 export const categories: Category[] = [
   { id: 'tools', name: 'Gemini 工具箱', badge: '常用', description: '每個工具是一組 Gemini Canvas 提示詞：依序貼上，就能做出自己的 AI 工具（共同常用、教授場域、師培生場域各 5 個）' },
+  { id: 'agents', name: 'Codex / Antigravity 工具箱', badge: '進階', description: '每個專案是一組 Codex／Antigravity 提示詞：在電腦的資料夾裡依序貼上，AI 會一步步寫出完整專案、測試並部署上線' },
   { id: 'top5', name: '必學 Top 5', badge: '研習核心', description: '師資培育研習最推薦優先上手的 5 個核心教學實戰技能' },
   { id: 'cat1', name: '教案設計與課程規劃', description: '課綱轉化、UbD 逆向設計、PBL 專題與 TPACK 跨領域教學架構' },
   { id: 'cat2', name: '教材開發與教學活動', description: '簡報腳本、差異化學習單、遊戲化闖關與互動數位教材' },

@@ -17,6 +17,7 @@ import {
   Tv,
   ShieldCheck,
   Wrench,
+  SquareTerminal,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -28,6 +29,7 @@ interface SidebarProps {
 
 const ICONS: Record<CategoryId, React.ReactNode> = {
   tools: <Wrench className="w-4 h-4 text-teal-600" />,
+  agents: <SquareTerminal className="w-4 h-4 text-violet-600" />,
   top5: <Award className="w-4 h-4 text-amber-500" />,
   cat1: <BookOpen className="w-4 h-4 text-blue-600" />,
   cat2: <Layers className="w-4 h-4 text-emerald-600" />,
@@ -46,7 +48,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentCategory, onSelectCateg
       <nav aria-label="技能分類" className="p-3 md:p-4 md:border-b border-slate-100">
         <div className="hidden md:flex items-center justify-between mb-3 px-1">
           <span className="text-xs font-bold text-slate-400 tracking-wider">工具與技能</span>
-          <span className="text-xs text-slate-400 font-mono">{counts.tools} 工具 · {counts.all} 技能</span>
+          <span className="text-xs text-slate-400 font-mono">{counts.tools + counts.agents} 工具 · {counts.all} 技能</span>
         </div>
 
         <ul className="flex md:flex-col gap-1.5 overflow-x-auto md:overflow-visible scrollbar-none -mx-3 px-3 md:mx-0 md:px-0">
@@ -54,12 +56,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentCategory, onSelectCateg
             const isActive = currentCategory === cat.id && !dimmed;
             const count = counts[cat.id];
             return (
-              <li key={cat.id} className={`shrink-0 md:shrink ${cat.id === 'tools' ? 'md:pb-2 md:mb-1 md:border-b md:border-slate-100' : ''}`}>
+              <li key={cat.id} className={`shrink-0 md:shrink ${cat.id === 'agents' ? 'md:pb-2 md:mb-1 md:border-b md:border-slate-100' : ''}`}>
                 <button
                   type="button"
                   onClick={() => onSelectCategory(cat.id)}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`w-full text-left px-3 md:px-3.5 py-2 md:py-2.5 rounded-xl text-sm font-medium transition-all duration-150 flex items-center justify-between gap-2.5 whitespace-nowrap ${
+                  className={`w-full text-left px-3 md:px-3.5 py-2 md:py-2.5 rounded-xl text-sm font-medium transition-all duration-150 flex items-center justify-between gap-2.5 whitespace-nowrap md:whitespace-normal ${
                     isActive
                       ? 'bg-blue-900 text-white shadow-sm'
                       : 'text-slate-700 bg-slate-100 md:bg-transparent hover:bg-slate-100 hover:text-slate-900'
@@ -69,7 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentCategory, onSelectCateg
                     <span className={`shrink-0 ${isActive ? '[&_svg]:text-white [&_svg]:fill-none' : ''}`} aria-hidden="true">
                       {ICONS[cat.id]}
                     </span>
-                    <span className="md:truncate">{cat.name}</span>
+                    <span className="md:leading-snug break-keep">{cat.name}</span>
                   </span>
                   {cat.id !== 'all' && (
                     <span
@@ -78,6 +80,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentCategory, onSelectCateg
                           ? 'bg-white/20 text-white'
                           : cat.id === 'tools'
                             ? 'bg-teal-100 text-teal-800'
+                            : cat.id === 'agents'
+                              ? 'bg-violet-100 text-violet-800'
                             : cat.id === 'top5' || cat.id === 'favorites'
                               ? 'bg-amber-100 text-amber-800'
                             : 'bg-slate-200/70 text-slate-500'

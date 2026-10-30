@@ -133,6 +133,16 @@ export const QuickGuideModal: React.FC<QuickGuideModalProps> = ({ isOpen, onClos
             </ul>
           </section>
 
+          <section className="p-4 rounded-xl border border-violet-200 bg-violet-50/60">
+            <h3 className="font-bold text-violet-900 mb-1.5">Codex / Antigravity 工具箱（進階，共 5 個專案）</h3>
+            <p className="text-xs text-slate-700 leading-relaxed mb-1.5">
+              用 Codex 或 Antigravity 開啟電腦裡的資料夾，依序貼上 5 個步驟，AI 會分階段寫出完整專案、測試並部署上線；每一步都會停下來等你確認，兩個工具也能互相接手。
+            </p>
+            <p className="text-xs text-slate-700 leading-relaxed">
+              舊教材 AI 轉生、3D 互動教材工作坊、課堂即時互動系統、課程 AI 助教網站、研究資料分析管線。
+            </p>
+          </section>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <section className="p-4 rounded-xl border border-blue-100 bg-blue-50/50">
               <h3 className="font-bold text-blue-900 mb-2 flex items-center gap-1.5">

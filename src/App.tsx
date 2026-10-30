@@ -8,7 +8,8 @@ import { SkillModal, SkillDraft } from './components/SkillModal';
 import { QuickGuideModal } from './components/QuickGuideModal';
 import { ToolCard } from './components/ToolCard';
 import { ToolGuide } from './components/ToolGuide';
-import { TOOLS, TOOL_GROUPS, GEMINI_URL, toolsInGroup, toolGuideMarkdown, ToolDef, ToolGroup } from './data/tools';
+import { TOOLS, TOOL_GROUPS, GEMINI_URL, CODEX_URL, ANTIGRAVITY_URL, HANDOFF_PROMPT, toolsInGroup, toolGuideMarkdown, ToolDef, ToolGroup } from './data/tools';
+import { AGENT_PROJECTS, agentProjectsFor } from './data/agentTools';
 import { markdownToDocx } from './lib/docx';
 import { BANNER_IMAGE_URL } from './components/HeroBanner';
 import { fetchAiStatus } from './lib/api';
@@ -33,7 +34,10 @@ const STORAGE = {
   toolProgress: 'ncue_tool_progress',
 };
 
-const skillCategories = categories.filter((c) => !['all', 'favorites', 'top5', 'tools'].includes(c.id));
+const skillCategories = categories.filter((c) => !['all', 'favorites', 'top5', 'tools', 'agents'].includes(c.id));
+
+const toolMatches = (t: ToolDef, terms: string[]) =>
+  terms.every((term) => `${t.title}${t.tagline}${t.desc}${t.theme ?? ''}${t.stack ?? ''}`.toLowerCase().includes(term));
 const categoryName = (id: string) => categories.find((c) => c.id === id)?.name || '教學模組';
 
 /** 搜尋計分：標題 > 標籤 / 編號 > 說明 > Prompt 內文；多個關鍵字需全部命中 */
@@ -128,6 +132,19 @@ export default function App() {
     downloadFile('NCUE_Gemini工具箱_全部提示詞.docx', markdownToDocx(md, 'Gemini 工具箱：Canvas 提示詞講義', 'NCUE 未來教師 AI 力・彰化師範大學'));
   };
 
+  /** 下載 Codex／Antigravity 全部專案提示詞講義 */
+  const downloadAllAgents = () => {
+    const md = [
+      `每個專案都是一組提示詞：建立一個新資料夾，用 Codex（${CODEX_URL}）或 Antigravity（${ANTIGRAVITY_URL}）開啟，依序貼上各步驟的提示詞。每一步 AI 完成後會停下來，先在本機試用，確認沒問題再貼下一步。`,
+      `**換工具、換電腦或隔天繼續時，先貼這段接手提示詞**：${HANDOFF_PROMPT}`,
+      ...AGENT_PROJECTS.map((t) => toolGuideMarkdown(t, 1)),
+    ].join('\n\n');
+    downloadFile(
+      'NCUE_CodexAntigravity工具箱_全部提示詞.docx',
+      markdownToDocx(md, 'Codex / Antigravity 工具箱：專案提示詞講義', 'NCUE 未來教師 AI 力・彰化師範大學'),
+    );
+  };
+
   const openSkillById = (id: string) => {
     const s = skillsData.find((x) => x.id === id);
     if (s) {
@@ -142,7 +159,7 @@ export default function App() {
   };
 
   const counts = useMemo(() => {
-    const c = { all: skillsData.length, top5: 0, favorites: favorites.length, tools: TOOLS.length } as Record<CategoryId, number>;
+    const c = { all: skillsData.length, top5: 0, favorites: favorites.length, tools: TOOLS.length, agents: AGENT_PROJECTS.length } as Record<CategoryId, number>;
     for (const cat of skillCategories) c[cat.id] = 0;
     for (const s of skillsData) {
       c[s.cat]++;
@@ -164,6 +181,7 @@ export default function App() {
     }
     switch (currentCategory) {
       case 'tools':
+      case 'agents':
         return [];
       case 'top5':
         return skillsData.filter((s) => s.top);
@@ -178,11 +196,18 @@ export default function App() {
   }, [currentCategory, searchQuery, favorites]);
 
   const matchedTools = useMemo(
-    () => (isSearching ? TOOLS.filter((t) => terms.every((term) => `${t.title}${t.tagline}${t.desc}${t.theme ?? ''}`.toLowerCase().includes(term))) : []),
+    () => (isSearching ? TOOLS.filter((t) => toolMatches(t, terms)) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [searchQuery],
   );
+  const matchedAgents = useMemo(
+    () => (isSearching ? AGENT_PROJECTS.filter((t) => toolMatches(t, terms)) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [searchQuery],
+  );
+  const matchedCount = matchedTools.length + matchedAgents.length;
   const showTools = currentCategory === 'tools' && !isSearching;
+  const showAgents = currentCategory === 'agents' && !isSearching;
 
   const activeCategoryMeta = categories.find((c) => c.id === currentCategory) || categories[0];
 
@@ -229,30 +254,32 @@ export default function App() {
         <Sidebar currentCategory={currentCategory} onSelectCategory={selectCategory} counts={counts} dimmed={isSearching} />
 
         <main id="main" className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 flex flex-col">
-          <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4 pb-5 border-b border-slate-200">
+          <div className="mb-6 flex flex-col xl:flex-row xl:items-end justify-between gap-4 pb-5 border-b border-slate-200">
             <div className="min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight break-keep">
                   {isSearching ? `搜尋「${searchQuery.trim()}」` : activeCategoryMeta.name}
                 </h2>
                 <span
                   className={`shrink-0 text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full ${
-                    showTools ? 'bg-teal-100 text-teal-900' : 'bg-blue-100 text-blue-900'
+                    showTools ? 'bg-teal-100 text-teal-900' : showAgents ? 'bg-violet-100 text-violet-900' : 'bg-blue-100 text-blue-900'
                   }`}
                 >
                   {showTools
                     ? `${TOOLS.length} 個工具`
-                    : isSearching
-                      ? `${visibleSkills.length + matchedTools.length} 個結果`
-                      : `${visibleSkills.length} 個技能`}
+                    : showAgents
+                      ? `${AGENT_PROJECTS.length} 個專案`
+                      : isSearching
+                        ? `${visibleSkills.length + matchedCount} 個結果`
+                        : `${visibleSkills.length} 個技能`}
                 </span>
               </div>
               <p className="text-sm text-slate-500">
-                {isSearching ? '搜尋範圍：Gemini 工具箱與全部技能（名稱、標籤、說明與 Prompt 內文）' : activeCategoryMeta.description}
+                {isSearching ? '搜尋範圍：Gemini 工具箱、Codex / Antigravity 工具箱與全部技能（名稱、標籤、說明與 Prompt 內文）' : activeCategoryMeta.description}
               </p>
             </div>
 
-            <div className="relative w-full md:w-80 shrink-0">
+            <div className="relative w-full xl:w-80 shrink-0">
               <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
               <input
                 ref={searchRef}
@@ -306,13 +333,25 @@ export default function App() {
                   <ToolCard key={t.id} tool={t} onOpen={setActiveTool} progress={toolProgress[t.id]?.length || 0} />
                 ))}
               </div>
-              {visibleSkills.length > 0 && <h3 className="text-sm font-bold text-blue-900 mt-8 -mb-1">教學技能</h3>}
             </section>
           )}
 
+          {matchedAgents.length > 0 && (
+            <section aria-label="符合的 Codex / Antigravity 專案" className="mb-8">
+              <h3 className="text-sm font-bold text-violet-800 mb-3">Codex / Antigravity 工具箱</h3>
+              <div className={grid}>
+                {matchedAgents.map((t) => (
+                  <ToolCard key={t.id} tool={t} onOpen={setActiveTool} progress={toolProgress[t.id]?.length || 0} />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {matchedCount > 0 && visibleSkills.length > 0 && <h3 className="text-sm font-bold text-blue-900 mb-3">教學技能</h3>}
+
           {showTools ? (
             <div className="space-y-10">
-              <div className="p-4 rounded-xl bg-gradient-to-r from-teal-800 to-teal-950 text-white flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="p-4 rounded-xl bg-gradient-to-r from-teal-800 to-teal-950 text-white flex flex-col xl:flex-row xl:items-center justify-between gap-4">
                 <ol className="flex flex-col sm:flex-row gap-2 sm:gap-6 text-sm">
                   <li><span className="font-bold text-teal-200">1</span>　開啟 Gemini，工具選 Canvas</li>
                   <li><span className="font-bold text-teal-200">2</span>　依序貼上每一步提示詞</li>
@@ -362,8 +401,63 @@ export default function App() {
                 提示詞的完成進度記在這台裝置的瀏覽器中。Gemini Canvas 需要 Google 帳號；用學校帳號時，若看不到 Canvas，請改用個人帳號或洽學校管理員。
               </p>
             </div>
+          ) : showAgents ? (
+            <div className="space-y-8">
+              <div className="p-4 rounded-xl bg-gradient-to-r from-violet-800 to-indigo-950 text-white flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                <ol className="flex flex-col sm:flex-row gap-2 sm:gap-6 text-sm">
+                  <li><span className="font-bold text-violet-200">1</span>　用 Codex／Antigravity 開啟新資料夾</li>
+                  <li><span className="font-bold text-violet-200">2</span>　依序貼上每一步提示詞</li>
+                  <li><span className="font-bold text-violet-200">3</span>　測試、部署上線</li>
+                </ol>
+                <div className="flex flex-wrap gap-2 shrink-0">
+                  <a
+                    href={CODEX_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-semibold px-3 py-2 rounded-lg bg-white text-violet-900 hover:bg-violet-50 whitespace-nowrap"
+                  >
+                    開啟 Codex
+                  </a>
+                  <a
+                    href={ANTIGRAVITY_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-semibold px-3 py-2 rounded-lg bg-white text-violet-900 hover:bg-violet-50 whitespace-nowrap"
+                  >
+                    下載 Antigravity
+                  </a>
+                  <button
+                    type="button"
+                    onClick={downloadAllAgents}
+                    className="text-xs font-semibold px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 whitespace-nowrap"
+                  >
+                    下載全部提示詞講義（Word）
+                  </button>
+                </div>
+              </div>
+              <div className={grid}>
+                {agentProjectsFor(currentRole).map((t) => (
+                  <ToolCard key={t.id} tool={t} onOpen={setActiveTool} progress={toolProgress[t.id]?.length || 0} />
+                ))}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                {[
+                  ['和 Gemini 工具箱有什麼不同？', 'Gemini 工具箱在 Canvas 生成單一網頁工具；這裡是在你電腦的資料夾裡寫出完整專案（多個檔案、後端、資料處理、自動測試），最後部署成正式網站。'],
+                  ['每一步都會停下來', '提示詞要求 AI 分階段完成：先說計畫、做完一步就測試、記錄到 docs/WORKLOG.md 並 commit，然後停下來等你確認。'],
+                  ['兩個工具可以互相接手', 'Codex 額度用完，就用 Antigravity 開同一個資料夾（反之亦然），先貼專案裡的「接手提示詞」，從中斷的地方繼續。'],
+                ].map(([t, d]) => (
+                  <div key={t} className="rounded-xl bg-white border border-slate-200 p-4">
+                    <p className="font-bold text-violet-900 mb-1">{t}</p>
+                    <p className="text-xs text-slate-600 leading-relaxed">{d}</p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Codex 使用 ChatGPT 帳號登入，Antigravity 使用 Google 帳號登入，兩邊的提示詞通用。專案會在你的電腦上建立檔案並執行指令，AI 要求執行指令時請先看清楚再允許。完成進度記在這台裝置的瀏覽器中。
+              </p>
+            </div>
           ) : visibleSkills.length === 0 ? (
-            matchedTools.length > 0 ? null : (
+            matchedCount > 0 ? null : (
             <div className="flex-1 flex flex-col items-center justify-center py-16 text-center">
               <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mb-3">
                 {currentCategory === 'favorites' && !isSearching ? <Star className="w-6 h-6" /> : <Search className="w-6 h-6" />}
